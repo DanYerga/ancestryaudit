@@ -1,3 +1,7 @@
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21290874.svg)](https://doi.org/10.5281/zenodo.21290874)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/)
+
 # AncestryAudit
 
 **Bias detection and correction framework for genomic cancer AI.**
