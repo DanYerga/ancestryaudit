@@ -324,7 +324,10 @@ class AncestryAuditFramework:
         Returns
         -------
         ValidationReport
-            pre_gap : performance gap before correction (pp)
+            pre_gap : performance gap before correction (pp), base model
+                scored on X_holdout (NOT the original audit's target_accuracy,
+                which was a different sample set - re-scoring on the same
+                holdout as post_gap makes this a fair before/after comparison)
             post_gap : performance gap after correction (pp)
             correction_magnitude : pre_gap - post_gap
             improvement_pp : accuracy improvement on target
@@ -332,17 +335,21 @@ class AncestryAuditFramework:
         if self._audit_report is None:
             raise RuntimeError(
                 "Run audit() before validate(). "
-                "validate() needs the pre-correction target accuracy."
+                "validate() needs the base model from the audit step."
+            )
+        if self._audit_report._model is None:
+            raise RuntimeError(
+                "audit_report._model is missing - cannot re-score the base "
+                "model on X_holdout for a fair before/after comparison."
             )
 
         X_h = _to_numpy(X_holdout)
         y_h = np.array(y_holdout)
 
-        pre_acc  = self._audit_report.target_accuracy
-        post_acc = float(
-            __import__("sklearn.metrics", fromlist=["accuracy_score"])
-            .accuracy_score(y_h, corrected_model.predict(X_h))
-        )
+        from sklearn.metrics import accuracy_score as _accuracy_score
+        base_model = self._audit_report._model
+        pre_acc  = float(_accuracy_score(y_h, base_model.predict(X_h)))
+        post_acc = float(_accuracy_score(y_h, corrected_model.predict(X_h)))
         source_acc = self._audit_report.source_accuracy
 
         pre_gap  = (source_acc - pre_acc)  * 100.0
@@ -471,6 +478,9 @@ class AncestryAuditFramework:
             print(f"  n_target for 80% pwr : ~{n_needed:,}")
             print(f"  n_source for 80% pwr : ~{n_needed*2:,}")
             print(f"  (both sides must scale together)")
+        print("  CAVEAT: power/MDE estimated on synthetic i.i.d. Gaussian")
+        print("  features, not real correlated CNV data. Treat as a rough")
+        print("  benchmark, not an empirical sample-size guarantee.")
         print("=" * 58)
 
         return {
@@ -482,6 +492,9 @@ class AncestryAuditFramework:
             "expected_gap_pp": expected_gap_pp,
             "n_source":        n_source,
             "n_target":        n_target,
+            "caveat": ("Estimated on synthetic i.i.d. Gaussian features, "
+                       "not real correlated CNV data - a rough benchmark, "
+                       "not an empirical guarantee."),
         }
 
     def generate_report(
