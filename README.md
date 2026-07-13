@@ -233,6 +233,14 @@ pass independent correctness tests on synthetic CNV data.
 > portion causes the framework to re-split a subset, producing different
 > model boundaries and non-comparable gap values.
 
+**Statistical power at TCGA scale:** `power_analysis(n_source=451, n_target=242,
+expected_gap_pp=3.0)` — the realistic gap range for CNV data — returns **11.0%
+power (UNDERPOWERED)**. Reaching 80% power requires `n_target≈798` (~3.3× the
+current n=242) and `n_source≈1596` (~3.5× the current n=451); both sides must
+scale together and the needed ratio (2:1 source:target) differs slightly from
+the current study's ratio (1.86:1). TCGA-LIHC/STAD sample sizes are not
+sufficient to detect a 1-5pp ancestry-linked gap at conventional power.
+
 ---
 
 ## Citation
