@@ -11,5 +11,6 @@ ancestryaudit.egg-info/SOURCES.txt
 ancestryaudit.egg-info/dependency_links.txt
 ancestryaudit.egg-info/requires.txt
 ancestryaudit.egg-info/top_level.txt
+tests/test_correction_null_calibration.py
 tests/test_null_calibration.py
 tests/test_power_calibration.py

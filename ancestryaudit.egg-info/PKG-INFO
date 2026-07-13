@@ -1,6 +1,6 @@
-Metadata-Version: 2.1
+Metadata-Version: 2.4
 Name: ancestryaudit
-Version: 0.3.9
+Version: 0.3.10
 Summary: Bias detection and correction framework for genomic cancer AI
 Home-page: https://github.com/DanYerga/ancestryaudit
 Author: Dana Yergaliyeva
@@ -17,6 +17,14 @@ Requires-Dist: pandas>=1.3
 Requires-Dist: scipy>=1.7
 Requires-Dist: shap>=0.41
 Requires-Dist: matplotlib>=3.4
+Dynamic: author
+Dynamic: classifier
+Dynamic: description
+Dynamic: description-content-type
+Dynamic: home-page
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary
 
 # AncestryAudit
 
@@ -171,7 +179,7 @@ framework.summary()
 | Field | Type | Description |
 |-------|------|-------------|
 | `gap_pp` | float | Accuracy gap in percentage points (positive = source better) |
-| `p_value` | float | Two-sided p-value from bootstrap t-test |
+| `p_value` | float | Two-sided p-value from label-permutation test |
 | `cohen_d` | float | Effect size |
 | `null_ci` | tuple | 2.5/97.5 percentiles of permutation null (NOT a CI on the gap) |
 | `source_accuracy` | float | Model accuracy on held-out source data |
@@ -185,10 +193,11 @@ framework.summary()
 | Field | Type | Description |
 |-------|------|-------------|
 | `delta_pp` | float | Mean accuracy improvement on target holdout (pp) |
-| `p_value` | float | Two-sided t-test on per-seed deltas vs 0 |
+| `p_value` | float | McNemar p-value (exact binomial when b+c<25, chi-square with continuity correction otherwise) |
 | `n_used` | int | Target samples used (min of n_samples and available) |
-| `seed_robustness` | dict | mean, sd, min, max, n_positive across 10 seeds |
-| `all_positive` | bool | True if all seeds showed positive correction |
+| `refit_robustness` | dict | mean/min/max delta_pp across 5 refits (model random_state varied, split held fixed) — tests training stochasticity only |
+| `all_positive` | bool | True if all 5 refits show positive delta_pp (not just the primary fixed split) |
+| `direction_confirmed` | bool | True if McNemar p<0.05 AND fine-tuned model beat baseline (c>b) |
 | `baseline_accuracy` | float | Source-only accuracy on full target |
 | `corrected_accuracy` | float | Estimated corrected accuracy on full target |
 
@@ -251,6 +260,14 @@ pass independent correctness tests on synthetic CNV data.
 > framework handle splitting internally. Passing only the training
 > portion causes the framework to re-split a subset, producing different
 > model boundaries and non-comparable gap values.
+
+**Statistical power at TCGA scale:** `power_analysis(n_source=451, n_target=242,
+expected_gap_pp=3.0)` — the realistic gap range for CNV data — returns **11.0%
+power (UNDERPOWERED)**. Reaching 80% power requires `n_target≈798` (~3.3× the
+current n=242) and `n_source≈1596` (~3.5× the current n=451); both sides must
+scale together and the needed ratio (2:1 source:target) differs slightly from
+the current study's ratio (1.86:1). TCGA-LIHC/STAD sample sizes are not
+sufficient to detect a 1-5pp ancestry-linked gap at conventional power.
 
 ---
 

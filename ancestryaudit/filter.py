@@ -111,8 +111,32 @@ def _is_junk(name: str) -> bool:
     return False
 
 
+# Known real genes that a naive "trailing P + digit(s)" name pattern would
+# misidentify as pseudogenes (confirmed false positives: TP53 itself, plus
+# PARP/MMP/TIMP gene families, GSTP1, CRP, ALPP, APP, MAPKAP1). This list is
+# NOT exhaustive — it only covers cases found during testing. Always inspect
+# filter_log's removed-gene list before trusting downstream results; this is
+# a name-pattern heuristic, not a verified HGNC biotype annotation.
+_KNOWN_REAL_GENES_NOT_PSEUDOGENES = frozenset({
+    "TP53", "PARP1", "PARP2", "PARP3", "PARP4", "GSTP1",
+    "MMP1", "MMP2", "MMP3", "MMP7", "MMP9", "MMP13",
+    "TIMP1", "TIMP2", "TIMP3", "CRP", "ALPP", "APP", "MAPKAP1",
+})
+
+
 def _is_pseudogene(name: str) -> bool:
-    """Pseudogene: HGNC convention — trailing P optionally followed by digit."""
+    """
+    Heuristic pseudogene detection: HGNC convention names a pseudogene
+    <parent_gene>P<number> (e.g. TP53P1). This is a NAME-PATTERN heuristic,
+    not a biotype lookup, and cannot fully distinguish a true pseudogene
+    suffix from a real gene symbol that happens to end in P + digit(s)
+    (e.g. TP53, PARP1, GSTP1, MMP1-13). A curated allowlist overrides known
+    false positives, but the allowlist is not exhaustive — for production
+    use, cross-check filter_log against a real gene biotype annotation
+    (e.g. Ensembl/GENCODE biotype field) rather than relying on this alone.
+    """
+    if name.upper() in _KNOWN_REAL_GENES_NOT_PSEUDOGENES:
+        return False
     return bool(re.search(r"P\d*$", name))
 
 
