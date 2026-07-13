@@ -1,5 +1,5 @@
 """
-AncestryAudit v0.1.0
+AncestryAudit
 ====================
 Bias detection and correction framework for genomic cancer AI.
 
@@ -52,7 +52,7 @@ class AuditReport:
     gap_pp:          float   # positive = source better; negative = target better
     p_value:         float
     cohen_d:         float
-    null_ci:         Tuple[float, float]   # 2.5/97.5 percentiles of permutation null (NOT a CI on the gap)   # 95% permutation null CI (spread of null, not CI on gap)
+    null_ci:         Tuple[float, float]   # 2.5/97.5 percentiles of permutation null distribution (NOT a CI on the gap)
     source_accuracy: float
     target_accuracy: float
     n_source:        int
@@ -74,13 +74,13 @@ class AuditReport:
 class CorrectionReport:
     """Results from AncestryAuditFramework.correct()."""
     delta_pp:             float
-    p_value:              float   # approximate; bootstrap CI is primary evidence
+    p_value:              float   # McNemar exact/chi-square p-value
     n_used:               int
     refit_robustness:     Dict[str, Any]
     baseline_accuracy:    float
     corrected_accuracy:   float
     all_positive:         bool
-    direction_confirmed:  bool = False  # True if bootstrap CI lower bound > 0
+    direction_confirmed:  bool = False  # True if McNemar p<0.05 and fine-tuned model beat baseline (c>b)
 
     def __str__(self) -> str:
         return (
@@ -119,7 +119,8 @@ class AncestryAuditFramework:
     random_state : int, default=42
         Seed for all random operations.
     n_bootstrap : int, default=1000
-        Bootstrap iterations for CI and p-value estimation.
+        Deprecated alias for n_permutations. Permutation-test iterations
+        used to build the null distribution and compute the p-value.
     threshold_pp : float, default=2.0
         Minimum |gap| in percentage points to trigger 'correction_required'.
     threshold_p : float, default=0.05
@@ -164,7 +165,7 @@ class AncestryAuditFramework:
 
         Trains model on 75% of source data; evaluates on the held-out 25%
         (source accuracy) and the full target set (target accuracy).
-        Bootstraps the gap for CI and p-value.
+        Runs a label-permutation test for the gap p-value and null distribution.
 
         Parameters
         ----------
@@ -272,7 +273,8 @@ class AncestryAuditFramework:
             p_value : McNemar p-value (exact binomial when b+c<25, chi-square otherwise)
             n_used : actual samples used (min(n_samples, available))
             refit_robustness : mean, min, max across 5 refits (split fixed)
-            all_positive : True if delta_pp > 0 on the primary fixed split
+            all_positive : True if all 5 refits show positive delta_pp (not just the primary split)
+            direction_confirmed : True if McNemar p<0.05 and fine-tuned model beat baseline (c>b)
         """
         corrected_model, results = apply_correction(
             model, X_source, y_source,

@@ -151,7 +151,7 @@ framework.summary()
 | Field | Type | Description |
 |-------|------|-------------|
 | `gap_pp` | float | Accuracy gap in percentage points (positive = source better) |
-| `p_value` | float | Two-sided p-value from bootstrap t-test |
+| `p_value` | float | Two-sided p-value from label-permutation test |
 | `cohen_d` | float | Effect size |
 | `null_ci` | tuple | 2.5/97.5 percentiles of permutation null (NOT a CI on the gap) |
 | `source_accuracy` | float | Model accuracy on held-out source data |
@@ -165,10 +165,11 @@ framework.summary()
 | Field | Type | Description |
 |-------|------|-------------|
 | `delta_pp` | float | Mean accuracy improvement on target holdout (pp) |
-| `p_value` | float | Two-sided t-test on per-seed deltas vs 0 |
+| `p_value` | float | McNemar p-value (exact binomial when b+c<25, chi-square with continuity correction otherwise) |
 | `n_used` | int | Target samples used (min of n_samples and available) |
-| `seed_robustness` | dict | mean, sd, min, max, n_positive across 10 seeds |
-| `all_positive` | bool | True if all seeds showed positive correction |
+| `refit_robustness` | dict | mean/min/max delta_pp across 5 refits (model random_state varied, split held fixed) — tests training stochasticity only |
+| `all_positive` | bool | True if all 5 refits show positive delta_pp (not just the primary fixed split) |
+| `direction_confirmed` | bool | True if McNemar p<0.05 AND fine-tuned model beat baseline (c>b) |
 | `baseline_accuracy` | float | Source-only accuracy on full target |
 | `corrected_accuracy` | float | Estimated corrected accuracy on full target |
 

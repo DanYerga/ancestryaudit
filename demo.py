@@ -44,7 +44,7 @@ def _gap_indicator(gap_pp):
 # ══════════════════════════════════════════════════════════════════════════════
 print()
 print("  ╔══════════════════════════════════════════════════════╗")
-print("  ║          AncestryAudit  v0.1.0  —  Demo             ║")
+print("  ║              AncestryAudit  —  Demo                 ║")
 print("  ║   Ancestry bias detection in genomic cancer AI      ║")
 print("  ╚══════════════════════════════════════════════════════╝")
 print()
