@@ -60,6 +60,10 @@ def generate_full_report(
             "n_used":            int(correction_report.n_used),
             "baseline_accuracy": round(float(correction_report.baseline_accuracy), 4),
             "corrected_accuracy":round(float(correction_report.corrected_accuracy), 4),
+            "corrected_accuracy_holdout": (
+                round(float(correction_report.corrected_accuracy_holdout), 4)
+                if correction_report.corrected_accuracy_holdout is not None else None
+            ),
             "all_positive":      bool(correction_report.all_positive),
             "refit_robustness":  _safe_dict(correction_report.refit_robustness),
         }

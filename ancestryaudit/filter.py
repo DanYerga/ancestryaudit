@@ -9,14 +9,16 @@ Filters:
 Reference: Kaufman et al. (2012) on feature-space snooping disclosure.
 """
 import re
+import warnings
 import numpy as np
 import pandas as pd
-from typing import List, Tuple, Dict, Union
+from typing import List, Tuple, Dict, Union, Optional
 
 
 def filter_noise(
     X: Union[np.ndarray, "pd.DataFrame"],
-    gene_list: List[str]
+    gene_list: List[str],
+    gene_biotype: Optional[Dict[str, str]] = None,
 ) -> Tuple[Union[np.ndarray, "pd.DataFrame"], List[str], Dict]:
     """
     Remove ancestry-linked CNV regions unrelated to cancer biology.
@@ -27,6 +29,13 @@ def filter_noise(
         CNV feature matrix. Columns must correspond to gene_list.
     gene_list : list of str
         Gene names for each column of X.
+    gene_biotype : dict, optional
+        Mapping of gene symbol -> Ensembl/GENCODE biotype (e.g.
+        {"TP53": "protein_coding", "TP53P1": "pseudogene"}). STRONGLY
+        RECOMMENDED. If provided, pseudogene removal uses this authoritative
+        annotation. If omitted, falls back to an unreliable name-pattern
+        heuristic (a UserWarning is raised) that is known to misclassify
+        real genes such as TP53, NUP98, CASP1-14, TOP1, and others.
 
     Returns
     -------
@@ -34,6 +43,16 @@ def filter_noise(
     kept_genes : list of str
     filter_log : dict with removal statistics and rationale
     """
+    if gene_biotype is None:
+        warnings.warn(
+            "filter_noise() called without gene_biotype: falling back to a "
+            "name-pattern heuristic for pseudogene detection that is known "
+            "to misclassify real genes (e.g. TP53, NUP98, CASP1-14, TOP1). "
+            "Supply a gene_biotype mapping (Ensembl/GENCODE 'gene_type' "
+            "column) for reliable results. Always inspect filter_log's "
+            "removed-gene list before trusting downstream analysis.",
+            UserWarning, stacklevel=2
+        )
     gene_list = list(gene_list)
     if len(gene_list) != _n_cols(X):
         raise ValueError(
@@ -41,13 +60,13 @@ def filter_noise(
             f"number of columns in X ({_n_cols(X)})."
         )
 
-    keep_mask = np.array([not _is_junk(g) for g in gene_list])
+    keep_mask = np.array([not _is_junk(g, gene_biotype) for g in gene_list])
 
     removed = [g for g, k in zip(gene_list, keep_mask) if not k]
     kept    = [g for g, k in zip(gene_list, keep_mask) if k]
 
     or_genes     = [g for g in removed if re.match(r"^OR\d", g)]
-    pseudogenes  = [g for g in removed if _is_pseudogene(g)]
+    pseudogenes  = [g for g in removed if _is_pseudogene(g, gene_biotype)]
     unchar       = [g for g in removed if "." in g]
     other_junk   = [g for g in removed
                     if g not in or_genes and g not in pseudogenes
@@ -73,6 +92,8 @@ def filter_noise(
             "uncharacterized":     len(unchar),
             "other":               len(other_junk),
         },
+        "pseudogene_method": ("biotype_lookup" if gene_biotype is not None
+                              else "name_heuristic_UNRELIABLE"),
         "rationale": (
             "Olfactory receptor clusters and pseudogenes exhibit "
             "copy-number variation driven by population-level genetic "
@@ -98,13 +119,13 @@ def filter_noise(
 
 # ── Private helpers ────────────────────────────────────────────────────────────
 
-def _is_junk(name: str) -> bool:
+def _is_junk(name: str, gene_biotype: Optional[Dict[str, str]] = None) -> bool:
     """Return True if gene should be excluded."""
     if not isinstance(name, str) or not name.strip():
         return True
     if re.match(r"^OR\d", name):          # Olfactory receptors
         return True
-    if _is_pseudogene(name):              # Pseudogenes
+    if _is_pseudogene(name, gene_biotype): # Pseudogenes
         return True
     if "." in name:                        # Clone-based uncharacterized loci
         return True
@@ -124,17 +145,21 @@ _KNOWN_REAL_GENES_NOT_PSEUDOGENES = frozenset({
 })
 
 
-def _is_pseudogene(name: str) -> bool:
+def _is_pseudogene(name: str, gene_biotype: Optional[Dict[str, str]] = None) -> bool:
     """
-    Heuristic pseudogene detection: HGNC convention names a pseudogene
-    <parent_gene>P<number> (e.g. TP53P1). This is a NAME-PATTERN heuristic,
-    not a biotype lookup, and cannot fully distinguish a true pseudogene
-    suffix from a real gene symbol that happens to end in P + digit(s)
-    (e.g. TP53, PARP1, GSTP1, MMP1-13). A curated allowlist overrides known
-    false positives, but the allowlist is not exhaustive — for production
-    use, cross-check filter_log against a real gene biotype annotation
-    (e.g. Ensembl/GENCODE biotype field) rather than relying on this alone.
+    Pseudogene detection. If gene_biotype is supplied, uses the real
+    Ensembl/GENCODE biotype annotation (authoritative). Otherwise falls
+    back to a NAME-PATTERN heuristic that is KNOWN TO BE UNRELIABLE: HGNC
+    pseudogene convention is <parent_gene>P<number> (e.g. TP53P1), which is
+    indistinguishable by name alone from real genes ending in P + digit(s)
+    (TP53, PARP1-4, GSTP1, MMP family, NUP98/214/153/62/50/88/93,
+    CASP1/3/7/8/9/14, TOP1, AQP1/3/9, NRIP1-3, REEP1/5/6, ADCYAP1, and
+    others not yet found). A small allowlist covers known cases but is NOT
+    exhaustive. Do not rely on the fallback path for any result that
+    matters; supply gene_biotype instead.
     """
+    if gene_biotype is not None:
+        return gene_biotype.get(name, "").strip().lower() == "pseudogene"
     if name.upper() in _KNOWN_REAL_GENES_NOT_PSEUDOGENES:
         return False
     return bool(re.search(r"P\d*$", name))

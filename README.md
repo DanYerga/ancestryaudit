@@ -223,8 +223,19 @@ the library reproduces paper results with 0.003pp numerical precision:
 | Metric | Paper | Library |
 |--------|-------|---------|
 | Mean PGI | +2.39pp | +2.393pp |
-| Algorithms positive | 7/7 | 7/7 |
+| Algorithms positive (raw accuracy) | 7/7 | 7/7 |
 | Direction | positive | positive |
+
+> **Important caveat:** the "7/7 algorithms positive" result above uses raw
+> accuracy on a combined LIHC-vs-STAD classification label. The White and
+> Asian cohorts have substantially different LIHC:STAD class ratios (60/40
+> vs 35/65, chi-square=38.70, p=4.9e-10), so raw accuracy is confounded by
+> this class-imbalance mismatch, not just CNV signal. Under balanced
+> accuracy (immune to differing class priors) with a proper permutation
+> test, 0 of 7 algorithms show a statistically significant gap (p-values
+> 0.19-0.99). The raw-accuracy reproduction above is retained for numerical
+> reference against the original paper figures; it is not evidence of a
+> real ancestry-linked effect on its own. See the paper for full details.
 
 All 6 API methods (import, audit, correct, validate, report, filter)
 pass independent correctness tests on synthetic CNV data.
