@@ -5,7 +5,7 @@ with open("README.md", encoding="utf-8") as f:
 
 setup(
     name="ancestryaudit",
-    version="0.3.9",
+    version="0.3.10",
     author="Dana Yergaliyeva",
     description="Bias detection and correction framework for genomic cancer AI",
     long_description=long_description,

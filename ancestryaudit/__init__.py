@@ -34,7 +34,7 @@ from .correction import apply_correction
 from .filter     import filter_noise
 from .report     import generate_full_report
 
-__version__ = "0.3.9"
+__version__ = "0.3.10"
 __author__  = "Dana Yergaliyeva"
 __all__     = [
     "AncestryAuditFramework",
