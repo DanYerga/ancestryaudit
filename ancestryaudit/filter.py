@@ -60,6 +60,22 @@ def filter_noise(
             f"number of columns in X ({_n_cols(X)})."
         )
 
+    # Guard against versioned Ensembl IDs (e.g. "ENSG00000141510.16"),
+    # which contain a "." for a completely different reason than
+    # clone-based uncharacterized loci ("." in a gene SYMBOL). If most of
+    # gene_list looks like an Ensembl ID, the "uncharacterized loci" check
+    # below would silently delete nearly everything.
+    n_ensg = sum(1 for g in gene_list if isinstance(g, str) and g.startswith("ENSG"))
+    if n_ensg / max(len(gene_list), 1) > 0.5:
+        raise ValueError(
+            f"{n_ensg}/{len(gene_list)} entries in gene_list look like "
+            f"versioned Ensembl gene IDs (e.g. 'ENSG00000141510.16'), not "
+            f"gene symbols. The uncharacterized-loci filter (\".\" in name) "
+            f"would misinterpret the version suffix and remove nearly "
+            f"everything. Convert to gene symbols first (e.g. via your "
+            f"gene_id_to_name mapping) before calling filter_noise()."
+        )
+
     keep_mask = np.array([not _is_junk(g, gene_biotype) for g in gene_list])
 
     removed = [g for g, k in zip(gene_list, keep_mask) if not k]
@@ -159,7 +175,16 @@ def _is_pseudogene(name: str, gene_biotype: Optional[Dict[str, str]] = None) -> 
     matters; supply gene_biotype instead.
     """
     if gene_biotype is not None:
-        return gene_biotype.get(name, "").strip().lower() == "pseudogene"
+        bt = gene_biotype.get(name, "").strip().lower()
+        # GENCODE/Ensembl use subtyped pseudogene biotypes (processed_
+        # pseudogene, unprocessed_pseudogene, transcribed_*_pseudogene,
+        # translated_*_pseudogene, IG/TR pseudogene classes, etc.), not
+        # the bare word "pseudogene" (that was only GRCh37/GENCODE v19).
+        # polymorphic_pseudogene is protein-coding in some individuals and
+        # deliberately NOT treated as a pseudogene here.
+        if bt == "polymorphic_pseudogene":
+            return False
+        return bt.endswith("pseudogene")
     if name.upper() in _KNOWN_REAL_GENES_NOT_PSEUDOGENES:
         return False
     return bool(re.search(r"P\d*$", name))

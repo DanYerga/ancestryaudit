@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+dist/
+build/
+*.egg-info/
+ancestryaudit_report.json
+*_report.json

@@ -220,17 +220,22 @@ class AncestryAuditFramework:
         self,
         X,
         gene_list: List[str],
+        gene_biotype: Optional[Dict[str, str]] = None,
     ):
         """
         Remove ancestry-linked CNV regions unrelated to cancer biology.
 
-        Removes olfactory receptors (OR*), pseudogenes (*P), and
+        Removes olfactory receptors (OR*), pseudogenes, and
         uncharacterized clone-based loci (names containing '.').
 
         Parameters
         ----------
         X : array-like or pd.DataFrame, shape (n_samples, n_genes)
         gene_list : list of str — gene names for each column
+        gene_biotype : dict, optional — Ensembl/GENCODE biotype per gene
+            symbol. STRONGLY RECOMMENDED: without this, pseudogene removal
+            falls back to an unreliable name-pattern heuristic (raises
+            UserWarning). Pass this whenever you have it.
 
         Returns
         -------
@@ -238,7 +243,8 @@ class AncestryAuditFramework:
         kept_genes : list of str
         filter_log : dict with removal statistics and Methods disclosure text
         """
-        X_filtered, kept_genes, filter_log = filter_noise(X, gene_list)
+        X_filtered, kept_genes, filter_log = filter_noise(
+            X, gene_list, gene_biotype=gene_biotype)
         self._filter_log = filter_log
         return X_filtered, kept_genes, filter_log
 
