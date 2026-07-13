@@ -130,7 +130,6 @@ def compute_audit(model, X_source, y_source, X_target, y_target,
         "perm_gaps":       perm_gaps.tolist(),
         "null_mean":       float(perm_gaps.mean()),
         "null_sd":         float(perm_gaps.std(ddof=1)),
-        # Keep for backward compat — same as perm_gaps
     }
 
 

@@ -78,9 +78,10 @@ class CorrectionReport:
     n_used:               int
     refit_robustness:     Dict[str, Any]
     baseline_accuracy:    float
-    corrected_accuracy:   float
+    corrected_accuracy:   float   # leaky/optimistic - see corrected_accuracy_holdout
     all_positive:         bool
     direction_confirmed:  bool = False  # True if McNemar p<0.05 and fine-tuned model beat baseline (c>b)
+    corrected_accuracy_holdout: Optional[float] = None  # clean, scored only on hold_primary
 
     def __str__(self) -> str:
         return (
@@ -275,6 +276,10 @@ class AncestryAuditFramework:
             refit_robustness : mean, min, max across 5 refits (split fixed)
             all_positive : True if all 5 refits show positive delta_pp (not just the primary split)
             direction_confirmed : True if McNemar p<0.05 and fine-tuned model beat baseline (c>b)
+
+        Note: corrected_accuracy is scored on the full X_target (includes
+        fine-tuning data, leaky/optimistic). Use corrected_accuracy_holdout
+        for a fair comparison against baseline_accuracy.
         """
         corrected_model, results = apply_correction(
             model, X_source, y_source,
@@ -291,6 +296,7 @@ class AncestryAuditFramework:
             refit_robustness=results.get("refit_robustness", {}),
             baseline_accuracy=results["baseline_accuracy"],
             corrected_accuracy=results["corrected_accuracy"],
+            corrected_accuracy_holdout=results.get("corrected_accuracy_holdout"),
             all_positive=results.get("all_positive", False),
             direction_confirmed=results.get("direction_confirmed", False),
         )
@@ -371,8 +377,8 @@ class AncestryAuditFramework:
 
         Returns
         -------
-        dict with power_pct, recommendation,
-             n_target_needed, n_source_needed
+        dict with power_pct, recommendation, n_target_needed, n_source_needed,
+             flip_rate_used, expected_gap_pp, n_source, n_target
         """
         import numpy as np
         from sklearn.linear_model import LogisticRegression

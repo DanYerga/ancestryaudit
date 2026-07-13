@@ -97,11 +97,14 @@ def apply_correction(model, X_source, y_source,
     m_ref.fit(X_source, y_source)
     baseline_acc  = float(accuracy_score(y_target, m_ref.predict(X_target)))
     corrected_acc = float(accuracy_score(y_target, m_ft.predict(X_target)))
+    corrected_acc_holdout = float(accuracy_score(
+        y_target[hold_primary], m_ft.predict(X_target[hold_primary])))
 
     results = {
         "delta_pp":           delta_pp,
         "baseline_accuracy":  baseline_acc,
         "corrected_accuracy": corrected_acc,
+        "corrected_accuracy_holdout": corrected_acc_holdout,
         "n_used":             int(n_actual),
         "n_holdout":          int(len(hold_primary)),
         "mcnemar": {
