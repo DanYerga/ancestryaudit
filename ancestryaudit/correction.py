@@ -126,7 +126,7 @@ def apply_correction(model, X_source, y_source,
         },
         "p_value":             p_mcnemar,
         "direction_confirmed": bool(p_mcnemar < 0.05 and c > b),
-        "all_positive":        bool(delta_pp > 0),
+        "all_positive":        bool(np.all(refit > 0)),
     }
     return m_ft, results
 
