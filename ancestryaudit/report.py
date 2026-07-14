@@ -42,7 +42,8 @@ def generate_full_report(
         report["audit"] = {
             "gap_pp":           round(float(audit_report.gap_pp), 4),
             "p_value":          round(float(audit_report.p_value), 6),
-            "cohen_d":          round(float(audit_report.cohen_d), 4),
+            "cohen_d":          (round(float(audit_report.cohen_d), 4)
+                                 if audit_report.cohen_d is not None else None),
             "null_ci_lower":    round(float(audit_report.null_ci[0]), 4),  # permutation null 2.5th percentile
             "null_ci_upper":    round(float(audit_report.null_ci[1]), 4),  # permutation null 97.5th percentile
             "source_accuracy":  round(float(audit_report.source_accuracy), 4),

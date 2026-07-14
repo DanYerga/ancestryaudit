@@ -51,20 +51,23 @@ class AuditReport:
     """Results from AncestryAuditFramework.audit()."""
     gap_pp:          float   # positive = source better; negative = target better
     p_value:         float
-    cohen_d:         float
+    cohen_d:         Optional[float]   # None when metric="balanced_accuracy"
     null_ci:         Tuple[float, float]   # 2.5/97.5 percentiles of permutation null distribution (NOT a CI on the gap)
     source_accuracy: float
     target_accuracy: float
     n_source:        int
     n_target:        int
     recommendation:  str     # "correction_required" | "no_action"
+    metric:          str = "accuracy"  # "accuracy" or "balanced_accuracy"
     # Private fields — excluded from repr
     _model:      Any        = field(default=None, repr=False)
 
     def __str__(self) -> str:
+        d_str = f"{self.cohen_d:.3f}" if self.cohen_d is not None else "N/A"
         return (
             f"AuditReport(gap={self.gap_pp:+.2f}pp, "
-            f"p={self.p_value:.4f}, d={self.cohen_d:.3f}, "
+            f"p={self.p_value:.4f}, d={d_str}, "
+            f"metric={self.metric}, "
             f"null_dist_spread=[{self.null_ci[0]:.2f}, {self.null_ci[1]:.2f}], "
             f"recommendation='{self.recommendation}')"
         )
@@ -160,7 +163,7 @@ class AncestryAuditFramework:
     # ── Public API ─────────────────────────────────────────────────────────────
 
     def audit(self, model, X_source, y_source,
-              X_target, y_target) -> AuditReport:
+              X_target, y_target, metric: str = "accuracy") -> AuditReport:
         """
         Detect ancestry-linked performance gap.
 
@@ -175,13 +178,20 @@ class AncestryAuditFramework:
         y_source : array-like — source labels (binary)
         X_target : array-like, shape (m, p) — target (Asian) CNV features
         y_target : array-like — target labels (binary)
+        metric : {"accuracy", "balanced_accuracy"}, default "accuracy"
+            "balanced_accuracy" is robust to differing class priors
+            between source and target - use this whenever the two
+            groups may have different class balance, since a raw
+            accuracy gap can otherwise reflect prior mismatch rather
+            than genuine ancestry-linked signal. cohen_d is None when
+            metric="balanced_accuracy".
 
         Returns
         -------
         AuditReport
             gap_pp : accuracy gap in percentage points (positive = source better)
             p_value : two-sided p-value from label-permutation test
-            cohen_d : effect size
+            cohen_d : effect size (accuracy metric only; None for balanced_accuracy)
             null_ci : 2.5/97.5 percentiles of the permutation null distribution
             (centered near zero — NOT a CI on the observed gap)
             recommendation : 'correction_required' if |gap|>threshold_pp
@@ -191,6 +201,7 @@ class AncestryAuditFramework:
             model, X_source, y_source, X_target, y_target,
             n_permutations=self.n_bootstrap,
             random_state=self.random_state,
+            metric=metric,
         )
 
         gap_pp  = results["gap_pp"]
@@ -212,6 +223,7 @@ class AncestryAuditFramework:
             n_source=results["n_source"],
             n_target=results["n_target"],
             recommendation=recommendation,
+            metric=results.get("metric", metric),
             _model=results["trained_model"],
         )
         return self._audit_report
