@@ -85,6 +85,7 @@ class CorrectionReport:
     all_positive:         bool
     direction_confirmed:  bool = False  # True if McNemar p<0.05 and fine-tuned model beat baseline (c>b)
     corrected_accuracy_holdout: Optional[float] = None  # clean, scored only on hold_primary
+    per_class_holdout:    Dict[str, Any] = field(default_factory=dict)  # per-class baseline/corrected accuracy on holdout - inspect for asymmetric (majority-class-driven) correction
 
     def __str__(self) -> str:
         return (
@@ -317,6 +318,7 @@ class AncestryAuditFramework:
             corrected_accuracy_holdout=results.get("corrected_accuracy_holdout"),
             all_positive=results.get("all_positive", False),
             direction_confirmed=results.get("direction_confirmed", False),
+            per_class_holdout=results.get("per_class_holdout", {}),
         )
         return corrected_model, self._correction_report
 
@@ -546,9 +548,10 @@ class AncestryAuditFramework:
 
         if self._audit_report:
             ar = self._audit_report
+            d_str = f"{ar.cohen_d:.3f}" if ar.cohen_d is not None else "N/A"
             lines += [
-                f"\n  [AUDIT]  Gap = {ar.gap_pp:+.2f}pp",
-                f"           p = {ar.p_value:.4f}  d = {ar.cohen_d:.3f}",
+                f"\n  [AUDIT]  Gap = {ar.gap_pp:+.2f}pp  (metric={ar.metric})",
+                f"           p = {ar.p_value:.4f}  d = {d_str}",
                 f"           Null CI [{ar.null_ci[0]:.2f}, {ar.null_ci[1]:.2f}]pp (permutation null spread)",
                 f"           → {ar.recommendation}",
             ]
@@ -558,7 +561,7 @@ class AncestryAuditFramework:
             lines += [
                 f"\n  [CORRECT] Δ = {cr.delta_pp:+.2f}pp  p = {cr.p_value:.4f}",
                 f"            n_used = {cr.n_used}",
-                f"            Robust across seeds: {cr.all_positive}",
+                f"            All 5 refits positive: {cr.all_positive}",
             ]
 
         if self._validation_report:

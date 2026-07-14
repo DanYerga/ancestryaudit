@@ -226,7 +226,7 @@ print(f"  ║  Bias detected      : {audit_report.gap_pp:>+6.2f}pp  "
 
 if correction_report:
     print(f"  ║  Correction applied : {correction_report.delta_pp:>+6.2f}pp  "
-          f"(10-seed robust)        ║")
+          f"(5-refit robust)        ║")
 
 if validation is not None:
     print(f"  ║  After correction   : {validation.post_gap:>+6.2f}pp  "

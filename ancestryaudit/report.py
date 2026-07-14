@@ -51,6 +51,7 @@ def generate_full_report(
             "n_source":         int(audit_report.n_source),
             "n_target":         int(audit_report.n_target),
             "recommendation":   str(audit_report.recommendation),
+            "metric":           str(getattr(audit_report, "metric", "accuracy")),
         }
         report["steps_completed"].append("audit")
 
@@ -67,6 +68,7 @@ def generate_full_report(
             ),
             "all_positive":      bool(correction_report.all_positive),
             "refit_robustness":  _safe_dict(correction_report.refit_robustness),
+            "per_class_holdout": _safe_dict(getattr(correction_report, "per_class_holdout", {})),
         }
         report["steps_completed"].append("correction")
 

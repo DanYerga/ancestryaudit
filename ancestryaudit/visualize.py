@@ -34,9 +34,11 @@ def plot_gap(audit_report, save_path: Optional[str] = None,
            edgecolor="black", linewidth=0.5)
 
     mid_y = (accs[0] + accs[1]) / 2
+    d_str = (f"{audit_report.cohen_d:.2f}"
+             if audit_report.cohen_d is not None else "N/A")
     ax.annotate(
         f"Gap: {audit_report.gap_pp:+.2f}pp\n"
-        f"p={audit_report.p_value:.4f}  d={audit_report.cohen_d:.2f}\n"
+        f"p={audit_report.p_value:.4f}  d={d_str}  (metric={audit_report.metric})\n"
         f"Null CI [{audit_report.null_ci[0]:.2f}, {audit_report.null_ci[1]:.2f}]pp (permutation null spread)",
         xy=(0.5, mid_y), xycoords=("axes fraction", "data"),
         ha="center", fontsize=8,

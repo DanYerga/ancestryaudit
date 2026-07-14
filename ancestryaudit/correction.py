@@ -70,6 +70,21 @@ def apply_correction(model, X_source, y_source,
     b = int(np.sum( correct_base & ~correct_ft))
     c = int(np.sum(~correct_base &  correct_ft))
 
+    # Per-class holdout breakdown. McNemar's b/c counts are pooled across
+    # classes, so a "positive" pooled delta_pp can still be entirely driven
+    # by the majority class while the minority class gets worse - the same
+    # class-imbalance blind spot audit() had before it gained balanced_accuracy
+    # support. This does not change the primary inference, but makes the
+    # asymmetry inspectable rather than silently hidden inside a pooled number.
+    per_class_holdout = {}
+    for cls in np.unique(y_hold):
+        mask = (y_hold == cls)
+        per_class_holdout[str(int(cls))] = {
+            "n":                   int(mask.sum()),
+            "baseline_accuracy":   float(accuracy_score(y_hold[mask], pred_base[mask])),
+            "corrected_accuracy":  float(accuracy_score(y_hold[mask], pred_ft[mask])),
+        }
+
     if b + c == 0:
         p_mcnemar = 1.0
         test_used = "trivial (b+c=0)"
@@ -130,6 +145,7 @@ def apply_correction(model, X_source, y_source,
         "p_value":             p_mcnemar,
         "direction_confirmed": bool(p_mcnemar < 0.05 and c > b),
         "all_positive":        bool(np.all(refit > 0)),
+        "per_class_holdout":   per_class_holdout,
     }
     return m_ft, results
 

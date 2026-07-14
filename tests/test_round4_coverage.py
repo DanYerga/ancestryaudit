@@ -126,9 +126,103 @@ def test_uncharacterized_loci_detected_by_name_not_biotype():
     print("PASS: uncharacterized loci detected by name pattern regardless of biotype.")
 
 
+def test_summary_does_not_crash_with_balanced_accuracy():
+    """
+    Regression test for a self-audit finding: summary() formatted
+    cohen_d with no None guard (f"{ar.cohen_d:.3f}"), which crashes with
+    TypeError whenever metric="balanced_accuracy" was used (cohen_d is
+    None on that path). This is the same class of bug that broke
+    demo.py twice - a stale reference to a field that changed shape.
+    """
+    rng = np.random.RandomState(9)
+    X_s = rng.randn(150, 10); y_s = (X_s[:, 0] + X_s[:, 1] > 0).astype(int)
+    X_t = rng.randn(80, 10); y_t = (X_t[:, 0] + X_t[:, 1] > 0).astype(int)
+
+    fw = AncestryAuditFramework()
+    fw.audit(LogisticRegression(max_iter=500), X_s, y_s, X_t, y_t,
+              metric="balanced_accuracy")
+    result = fw.summary()  # must not raise
+    assert "d = N/A" in result
+    print("PASS: summary() handles cohen_d=None without crashing.")
+
+
+def test_report_serializes_metric():
+    """
+    Regression test: generate_report()'s JSON output must record which
+    metric produced the audit numbers, otherwise a saved report is
+    ambiguous about whether gap_pp came from accuracy or
+    balanced_accuracy - critical context given how much this project's
+    conclusions depend on that choice.
+    """
+    rng = np.random.RandomState(11)
+    X_s = rng.randn(150, 10); y_s = (X_s[:, 0] + X_s[:, 1] > 0).astype(int)
+    X_t = rng.randn(80, 10); y_t = (X_t[:, 0] + X_t[:, 1] > 0).astype(int)
+
+    fw = AncestryAuditFramework()
+    fw.audit(LogisticRegression(max_iter=500), X_s, y_s, X_t, y_t,
+              metric="balanced_accuracy")
+    report_dict = fw.generate_report("/tmp/_test_metric_report.json")
+    assert report_dict["audit"]["metric"] == "balanced_accuracy"
+    print("PASS: report.py correctly serializes metric.")
+
+
+def test_plot_gap_does_not_crash_with_balanced_accuracy():
+    """
+    Regression test for a self-audit finding: visualize.py's plot_gap()
+    formatted cohen_d with no None guard (f"d={audit_report.cohen_d:.2f}"),
+    the same crash class already fixed in summary() and report.py, but
+    this file was missed in that round. This matters for ISEF specifically:
+    the paper's headline finding (0/7 significant under balanced_accuracy)
+    can only be plotted for a poster/paper figure via this function.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    from ancestryaudit.visualize import plot_gap
+
+    rng = np.random.RandomState(3)
+    X_s = rng.randn(150, 10); y_s = (X_s[:, 0] + X_s[:, 1] > 0).astype(int)
+    X_t = rng.randn(80, 10); y_t = (X_t[:, 0] + X_t[:, 1] > 0).astype(int)
+
+    fw = AncestryAuditFramework()
+    report = fw.audit(LogisticRegression(max_iter=500), X_s, y_s, X_t, y_t,
+                       metric="balanced_accuracy")
+    plot_gap(report)  # must not raise
+    print("PASS: plot_gap() handles cohen_d=None without crashing.")
+
+
+def test_correction_reports_per_class_holdout():
+    """
+    Regression test for a self-audit finding: apply_correction()'s McNemar
+    step pools b/c counts across classes with no way to check whether a
+    positive pooled delta_pp is actually driven entirely by the majority
+    class while the minority class got worse - the same class-imbalance
+    blind spot audit() had before balanced_accuracy support was added.
+    per_class_holdout makes that asymmetry inspectable.
+    """
+    rng = np.random.RandomState(5)
+    X_s = rng.randn(150, 10); y_s = (X_s[:, 0] + X_s[:, 1] > 0).astype(int)
+    X_t = rng.randn(80, 10); y_t = (X_t[:, 0] + X_t[:, 1] > 0).astype(int)
+
+    fw = AncestryAuditFramework()
+    fw.audit(LogisticRegression(max_iter=500), X_s, y_s, X_t, y_t)
+    _, crep = fw.correct(LogisticRegression(max_iter=500), X_s, y_s,
+                          X_t[:60], y_t[:60], n_samples=30)
+    assert set(crep.per_class_holdout.keys()) == {"0", "1"}
+    for cls_stats in crep.per_class_holdout.values():
+        assert {"n", "baseline_accuracy", "corrected_accuracy"} <= set(cls_stats.keys())
+
+    report_dict = fw.generate_report("/tmp/_test_per_class_report.json")
+    assert "per_class_holdout" in report_dict["correction"]
+    print("PASS: per_class_holdout present on CorrectionReport and in JSON report.")
+
+
 if __name__ == "__main__":
     test_validate_uses_same_holdout_for_pre_and_post()
     test_gene_biotype_overrides_name_heuristic()
     test_audit_balanced_accuracy_reachable_and_correct()
     test_uncharacterized_loci_detected_by_name_not_biotype()
+    test_summary_does_not_crash_with_balanced_accuracy()
+    test_report_serializes_metric()
+    test_plot_gap_does_not_crash_with_balanced_accuracy()
+    test_correction_reports_per_class_holdout()
     print("\nAll round-4 coverage tests passed.")
