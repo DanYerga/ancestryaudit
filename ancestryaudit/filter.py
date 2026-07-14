@@ -54,6 +54,27 @@ def filter_noise(
             UserWarning, stacklevel=2
         )
     gene_list = list(gene_list)
+
+    # A gene present in gene_list but missing from an otherwise-provided
+    # gene_biotype dict is an annotation-coverage gap, not evidence the
+    # gene isn't a pseudogene - _is_pseudogene() falls back to the name
+    # heuristic per-gene in that case. Warn about it explicitly so partial
+    # coverage isn't silently mistaken for full biotype-authoritative
+    # results (a UserWarning only fired before when gene_biotype was None
+    # entirely, not when it was merely incomplete).
+    missing_biotype = []
+    if gene_biotype is not None:
+        missing_biotype = [g for g in gene_list
+                           if isinstance(g, str) and g not in gene_biotype]
+        if missing_biotype:
+            warnings.warn(
+                f"gene_biotype is missing {len(missing_biotype)}/"
+                f"{len(gene_list)} genes in gene_list. Those genes fell "
+                f"back to the unreliable name-pattern heuristic for "
+                f"pseudogene detection, not the biotype annotation. "
+                f"First 20 missing: {missing_biotype[:20]}",
+                UserWarning, stacklevel=2
+            )
     if len(gene_list) != _n_cols(X):
         raise ValueError(
             f"gene_list length ({len(gene_list)}) must match "
@@ -81,9 +102,18 @@ def filter_noise(
     removed = [g for g, k in zip(gene_list, keep_mask) if not k]
     kept    = [g for g, k in zip(gene_list, keep_mask) if k]
 
+    # Mutually exclusive categorization, in the same priority order _is_junk()
+    # uses to decide removal (OR > pseudogene > uncharacterized). Without this,
+    # a gene matching more than one category (e.g. "OR2X1P" - both an olfactory
+    # receptor AND pseudogene-shaped) gets double-counted, and the category
+    # counts silently sum to more than n_removed - an inconsistency that would
+    # show up directly in the Methods disclosure text below.
     or_genes     = [g for g in removed if _is_or_gene(g)]
-    pseudogenes  = [g for g in removed if _is_pseudogene(g, gene_biotype)]
-    unchar       = [g for g in removed if _is_uncharacterized(g, gene_biotype)]
+    pseudogenes  = [g for g in removed
+                    if g not in or_genes and _is_pseudogene(g, gene_biotype)]
+    unchar       = [g for g in removed
+                    if g not in or_genes and g not in pseudogenes
+                    and _is_uncharacterized(g, gene_biotype)]
     other_junk   = [g for g in removed
                     if g not in or_genes and g not in pseudogenes
                     and g not in unchar]
@@ -108,8 +138,11 @@ def filter_noise(
             "uncharacterized":     len(unchar),
             "other":               len(other_junk),
         },
-        "pseudogene_method": ("biotype_lookup" if gene_biotype is not None
-                              else "name_heuristic_UNRELIABLE"),
+        "pseudogene_method": (
+            "name_heuristic_UNRELIABLE" if gene_biotype is None
+            else "biotype_lookup" if not missing_biotype
+            else f"biotype_lookup_partial ({len(missing_biotype)} genes fell back to name heuristic)"
+        ),
         "rationale": (
             "Olfactory receptor clusters and pseudogenes exhibit "
             "copy-number variation driven by population-level genetic "
@@ -170,20 +203,30 @@ _KNOWN_REAL_GENES_NOT_PSEUDOGENES = frozenset({
 
 def _is_pseudogene(name: str, gene_biotype: Optional[Dict[str, str]] = None) -> bool:
     """
-    Pseudogene detection. If gene_biotype is supplied, uses the real
-    Ensembl/GENCODE biotype annotation (authoritative). Otherwise falls
-    back to a NAME-PATTERN heuristic that is KNOWN TO BE UNRELIABLE: HGNC
-    pseudogene convention is <parent_gene>P<number> (e.g. TP53P1), which is
-    indistinguishable by name alone from real genes ending in P + digit(s)
-    (TP53, PARP1-4, GSTP1, MMP family, NUP98/214/153/62/50/88/93,
-    CASP1/3/7/8/9/14, TOP1, AQP1/3/9, NRIP1-3, REEP1/5/6, ADCYAP1, and
-    others not yet found). A small allowlist covers known cases but is NOT
-    exhaustive. Do not rely on the fallback path for any result that
-    matters; supply gene_biotype instead.
+    Pseudogene detection. If gene_biotype is supplied AND contains an entry
+    for this specific gene, uses the real Ensembl/GENCODE biotype
+    annotation (authoritative). Otherwise falls back to a NAME-PATTERN
+    heuristic that is KNOWN TO BE UNRELIABLE: HGNC pseudogene convention is
+    <parent_gene>P<number> (e.g. TP53P1), which is indistinguishable by
+    name alone from real genes ending in P + digit(s) (TP53, PARP1-4,
+    GSTP1, MMP family, NUP98/214/153/62/50/88/93, CASP1/3/7/8/9/14, TOP1,
+    AQP1/3/9, NRIP1-3, REEP1/5/6, ADCYAP1, and others not yet found). A
+    small allowlist covers known cases but is NOT exhaustive. Do not rely
+    on the fallback path for any result that matters; supply gene_biotype
+    instead.
+
+    IMPORTANT: a gene missing from an otherwise-provided gene_biotype dict
+    is an annotation-COVERAGE gap, not evidence the gene isn't a
+    pseudogene. An earlier version treated "not in the dict" the same as
+    "confirmed not a pseudogene" (via dict.get(name, "") defaulting to an
+    empty string that never matches), which silently let real pseudogenes
+    through whenever the biotype mapping had incomplete coverage - a
+    realistic scenario with real GENCODE/symbol-matching data. This
+    version falls back to the name heuristic per-gene instead.
     """
     if not isinstance(name, str):
         return False
-    if gene_biotype is not None:
+    if gene_biotype is not None and name in gene_biotype:
         bt = gene_biotype.get(name, "").strip().lower()
         # GENCODE/Ensembl use subtyped pseudogene biotypes (processed_
         # pseudogene, unprocessed_pseudogene, transcribed_*_pseudogene,

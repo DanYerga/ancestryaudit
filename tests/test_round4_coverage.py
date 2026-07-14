@@ -234,6 +234,78 @@ def test_power_analysis_flags_unconfirmed_ceiling():
     print("PASS: power_analysis flags unconfirmed search-ceiling result.")
 
 
+def test_filter_category_counts_sum_to_n_removed():
+    """
+    Regression test for a self-audit finding: filter_noise()'s category
+    breakdown (olfactory_receptors/pseudogenes/uncharacterized/other) used
+    non-exclusive membership checks, so a gene matching more than one
+    category (e.g. "OR2X1P" - both an OR gene and pseudogene-shaped, an
+    exact case demo.py's own synthetic data injects) was double-counted.
+    The category counts must always sum to n_removed exactly, matching
+    the same OR > pseudogene > uncharacterized priority _is_junk() uses
+    to decide removal in the first place.
+    """
+    import numpy as np
+    from ancestryaudit.filter import filter_noise
+
+    gene_list = [f"GENE{i:04d}" for i in range(20)]
+    gene_list[5]  = "OR2X1P"       # both OR-shaped and pseudogene-shaped
+    gene_list[10] = "OR5A1"
+    gene_list[12] = "TP53P1"
+    gene_list[15] = "AL117190.3"
+    X = np.random.RandomState(0).randn(5, 20)
+
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        _, _, log = filter_noise(X, gene_list)
+
+    assert log["n_removed"] == sum(log["categories"].values()), (
+        f"category counts {log['categories']} sum to "
+        f"{sum(log['categories'].values())}, expected n_removed={log['n_removed']}"
+    )
+    print("PASS: filter_noise category counts are mutually exclusive.")
+
+
+def test_filter_falls_back_per_gene_on_partial_biotype_coverage():
+    """
+    Regression test for a self-audit finding: when gene_biotype is
+    provided but incomplete (a realistic scenario - real symbol-matching
+    between a CNV matrix and a GENCODE table rarely has 100% coverage),
+    a gene missing from the dict was silently treated as "confirmed not a
+    pseudogene" (dict.get(name, "") never matches "...pseudogene"),
+    rather than falling back to the name heuristic for that gene. This let
+    real pseudogenes slip through filtering whenever biotype coverage was
+    incomplete - the opposite of what supplying gene_biotype is supposed
+    to guarantee.
+    """
+    import warnings
+    from ancestryaudit.filter import filter_noise
+    import numpy as np
+
+    gene_list = ["TP53", "TP53P1", "XYZP1", "GENE0004"]
+    gene_biotype = {
+        "TP53": "protein_coding",
+        "TP53P1": "processed_pseudogene",
+        "GENE0004": "protein_coding",
+        # XYZP1 intentionally missing - simulates incomplete annotation coverage
+    }
+    X = np.random.RandomState(1).randn(5, 4)
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        _, kept, log = filter_noise(X, gene_list, gene_biotype=gene_biotype)
+        coverage_warning_fired = any("missing" in str(x.message) for x in w)
+
+    assert "XYZP1" not in kept, (
+        "XYZP1 (pseudogene-shaped, missing from gene_biotype) was kept - "
+        "partial biotype coverage silently suppressed the name-heuristic fallback."
+    )
+    assert coverage_warning_fired, "No warning raised for incomplete gene_biotype coverage."
+    assert "partial" in log["pseudogene_method"]
+    print("PASS: partial gene_biotype coverage falls back to name heuristic per-gene, with a warning.")
+
+
 if __name__ == "__main__":
     test_validate_uses_same_holdout_for_pre_and_post()
     test_gene_biotype_overrides_name_heuristic()
@@ -244,4 +316,6 @@ if __name__ == "__main__":
     test_plot_gap_does_not_crash_with_balanced_accuracy()
     test_correction_reports_per_class_holdout()
     test_power_analysis_flags_unconfirmed_ceiling()
+    test_filter_category_counts_sum_to_n_removed()
+    test_filter_falls_back_per_gene_on_partial_biotype_coverage()
     print("\nAll round-4 coverage tests passed.")
