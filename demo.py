@@ -165,7 +165,7 @@ if audit_report.recommendation == "correction_required":
     n_finetune = 50
 
     print(f"  │  Fine-tuning with {n_finetune} labeled Asian samples ...")
-    print(f"  │  Testing robustness across 10 random seeds ...")
+    print(f"  │  Testing robustness across 5 refits (fixed split) ...")
 
     corrected_model, correction_report = framework.correct(
         model, X_w_filt, y_western,
@@ -173,14 +173,14 @@ if audit_report.recommendation == "correction_required":
         n_samples=n_finetune
     )
 
-    rob = correction_report.seed_robustness
+    rob = correction_report.refit_robustness
     print(f"  │")
     print(f"  │  Mean correction  : {correction_report.delta_pp:+.2f}pp")
-    print(f"  │  SD across seeds  : ±{rob['sd']:.2f}pp")
-    print(f"  │  Range            : [{rob['min']:+.2f}, {rob['max']:+.2f}]pp")
-    print(f"  │  Seeds positive   : {rob['n_positive']}/{rob['n_seeds']}  "
-          f"{'✓ ROBUST' if correction_report.all_positive else '~ PARTIAL'}")
-    print(f"  │  p-value          : {correction_report.p_value:.4f}")
+    print(f"  │  Refit mean delta : {rob['mean_delta_pp']:+.2f}pp")
+    print(f"  │  Refit range      : [{rob['min_delta_pp']:+.2f}, {rob['max_delta_pp']:+.2f}]pp")
+    print(f"  │  Refits           : {rob['n_refits']}  "
+          f"{'✓ ALL POSITIVE' if correction_report.all_positive else '~ MIXED SIGN'}")
+    print(f"  │  p-value (McNemar): {correction_report.p_value:.4f}")
     _ok("Correction complete")
 else:
     _step(4, 5, "Correction — skipped (no_action)")
@@ -192,20 +192,23 @@ _step(5, 5, "Validating correction on held-out Asian data")
 
 if corrected_model is not None:
     validation = framework.validate(corrected_model, X_a_filt, y_asian)
+    pre_bar  = _bar(max(0, audit_report.gap_pp / 10.0), width=15,
+                    fill="▓", empty="░")
+    post_bar = _bar(max(0, validation.post_gap / 10.0), width=15,
+                    fill="▓", empty="░")
+    print(f"  │")
+    print(f"  │  Pre-correction gap  : {validation.pre_gap:>+7.2f}pp  [{pre_bar}]")
+    print(f"  │  Post-correction gap : {validation.post_gap:>+7.2f}pp  [{post_bar}]")
+    print(f"  │  Improvement         : {validation.improvement_pp:>+7.2f}pp  "
+          f"{'✓ closed' if validation.post_gap < validation.pre_gap else '~ no change'}")
+    _ok("Validation complete")
 else:
-    validation = framework.validate(model, X_a_filt, y_asian)
-
-pre_bar  = _bar(max(0, audit_report.gap_pp / 10.0), width=15,
-                fill="▓", empty="░")
-post_bar = _bar(max(0, validation.post_gap / 10.0), width=15,
-                fill="▓", empty="░")
-
-print(f"  │")
-print(f"  │  Pre-correction gap  : {validation.pre_gap:>+7.2f}pp  [{pre_bar}]")
-print(f"  │  Post-correction gap : {validation.post_gap:>+7.2f}pp  [{post_bar}]")
-print(f"  │  Improvement         : {validation.improvement_pp:>+7.2f}pp  "
-      f"{'✓ closed' if validation.post_gap < validation.pre_gap else '~ no change'}")
-_ok("Validation complete")
+    # No correction was applied (gap below threshold), so there is nothing
+    # to validate - calling validate() here would require scoring an
+    # unfitted model, which is meaningless. Skip explicitly instead.
+    validation = None
+    print(f"  │  No correction was applied (gap below threshold) - nothing to validate.")
+    _ok("Validation skipped (no_action)")
 
 # ── 7. Report ──────────────────────────────────────────────────────────────────
 report_path = "ancestryaudit_report.json"
@@ -225,8 +228,11 @@ if correction_report:
     print(f"  ║  Correction applied : {correction_report.delta_pp:>+6.2f}pp  "
           f"(10-seed robust)        ║")
 
-print(f"  ║  After correction   : {validation.post_gap:>+6.2f}pp  "
-      f"gap remaining           ║")
+if validation is not None:
+    print(f"  ║  After correction   : {validation.post_gap:>+6.2f}pp  "
+          f"gap remaining           ║")
+else:
+    print(f"  ║  After correction   : N/A (no correction applied)      ║")
 print(f"  ║  Steps completed    : {', '.join(report_dict['steps_completed']):<28}  ║")
 print(f"  ║  Report saved to    : {report_path:<28}  ║")
 print(f"  ║  Runtime            : {elapsed:.1f}s{' '*37}║")

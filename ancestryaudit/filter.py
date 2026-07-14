@@ -81,9 +81,9 @@ def filter_noise(
     removed = [g for g, k in zip(gene_list, keep_mask) if not k]
     kept    = [g for g, k in zip(gene_list, keep_mask) if k]
 
-    or_genes     = [g for g in removed if re.match(r"^OR\d", g)]
+    or_genes     = [g for g in removed if _is_or_gene(g)]
     pseudogenes  = [g for g in removed if _is_pseudogene(g, gene_biotype)]
-    unchar       = [g for g in removed if "." in g]
+    unchar       = [g for g in removed if _is_uncharacterized(g, gene_biotype)]
     other_junk   = [g for g in removed
                     if g not in or_genes and g not in pseudogenes
                     and g not in unchar]
@@ -139,13 +139,20 @@ def _is_junk(name: str, gene_biotype: Optional[Dict[str, str]] = None) -> bool:
     """Return True if gene should be excluded."""
     if not isinstance(name, str) or not name.strip():
         return True
-    if re.match(r"^OR\d", name):          # Olfactory receptors
+    if _is_or_gene(name):                        # Olfactory receptors
         return True
-    if _is_pseudogene(name, gene_biotype): # Pseudogenes
+    if _is_pseudogene(name, gene_biotype):        # Pseudogenes
         return True
-    if "." in name:                        # Clone-based uncharacterized loci
+    if _is_uncharacterized(name, gene_biotype):   # Uncharacterized loci
         return True
     return False
+
+
+def _is_or_gene(name) -> bool:
+    """Olfactory receptor gene (OR followed by a digit). Safe on non-strings."""
+    if not isinstance(name, str):
+        return False
+    return bool(re.match(r"^OR\d", name))
 
 
 # Known real genes that a naive "trailing P + digit(s)" name pattern would
@@ -174,6 +181,8 @@ def _is_pseudogene(name: str, gene_biotype: Optional[Dict[str, str]] = None) -> 
     exhaustive. Do not rely on the fallback path for any result that
     matters; supply gene_biotype instead.
     """
+    if not isinstance(name, str):
+        return False
     if gene_biotype is not None:
         bt = gene_biotype.get(name, "").strip().lower()
         # GENCODE/Ensembl use subtyped pseudogene biotypes (processed_
@@ -188,6 +197,33 @@ def _is_pseudogene(name: str, gene_biotype: Optional[Dict[str, str]] = None) -> 
     if name.upper() in _KNOWN_REAL_GENES_NOT_PSEUDOGENES:
         return False
     return bool(re.search(r"P\d*$", name))
+
+
+# GENCODE biotype used for loci that are real, mapped genomic locations
+# but whose function/transcript structure isn\'t yet confirmed. Distinct
+# from a pseudogene or a true "no information at all" placeholder ID.
+_UNCHARACTERIZED_BIOTYPES = frozenset({"tec"})
+
+
+def _is_uncharacterized(name, gene_biotype: Optional[Dict[str, str]] = None) -> bool:
+    """
+    Detect clone-based/uncharacterized loci. If gene_biotype is supplied
+    AND has an entry for this gene, trust it completely (a real biotype
+    like "protein_coding" means this is NOT uncharacterized, even if the
+    identifier happens to contain a "." - e.g. a versioned Ensembl ID like
+    "ENSG00000141510.16" is a real, well-characterized gene; the "." is a
+    version suffix, not a marker of an uncharacterized clone-based locus).
+    Only falls back to the name-pattern heuristic ("." in name) when
+    gene_biotype is None OR doesn\'t have an entry for this specific gene -
+    in the latter case we cannot confirm the gene\'s identity at all, so
+    the heuristic is the best available signal, not a good one.
+    """
+    if not isinstance(name, str):
+        return False
+    if gene_biotype is not None and name in gene_biotype:
+        bt = gene_biotype.get(name, "").strip().lower()
+        return bt in _UNCHARACTERIZED_BIOTYPES
+    return "." in name
 
 
 def _n_cols(X) -> int:
