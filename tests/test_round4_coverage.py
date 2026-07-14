@@ -97,8 +97,38 @@ def test_audit_balanced_accuracy_reachable_and_correct():
     print("PASS: balanced_accuracy reachable via audit(), cohen_d handled.")
 
 
+def test_uncharacterized_loci_detected_by_name_not_biotype():
+    """
+    Regression test for a self-audit finding: an earlier fix let biotype
+    override the uncharacterized-loci check, trusting biotype=="TEC" as
+    the sole signal. That wrongly KEPT real clone-based loci (e.g. this
+    module's own docstring example, "AL117190.3") whenever their biotype
+    was anything else (lncRNA, protein_coding, etc.) - common in real
+    GENCODE data. Detection must be name-pattern based, with only a
+    versioned-Ensembl-ID exception, regardless of biotype.
+    """
+    genes = ["AL117190.3", "RP11-34P13.7", "CR589904.2",
+             "TP53", "ENSG00000141510.16"]
+    biotype = {
+        "AL117190.3": "lncRNA",
+        "RP11-34P13.7": "processed_transcript",
+        "CR589904.2": "antisense",
+        "TP53": "protein_coding",
+        "ENSG00000141510.16": "protein_coding",
+    }
+    X = np.random.randn(5, len(genes))
+    _, kept, flog = filter_noise(X, genes, gene_biotype=biotype)
+
+    assert set(kept) == {"TP53", "ENSG00000141510.16"}, (
+        f"Expected only TP53 and the versioned Ensembl ID kept, got {kept}"
+    )
+    assert flog["categories"]["uncharacterized"] == 3
+    print("PASS: uncharacterized loci detected by name pattern regardless of biotype.")
+
+
 if __name__ == "__main__":
     test_validate_uses_same_holdout_for_pre_and_post()
     test_gene_biotype_overrides_name_heuristic()
     test_audit_balanced_accuracy_reachable_and_correct()
+    test_uncharacterized_loci_detected_by_name_not_biotype()
     print("\nAll round-4 coverage tests passed.")

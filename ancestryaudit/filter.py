@@ -199,30 +199,40 @@ def _is_pseudogene(name: str, gene_biotype: Optional[Dict[str, str]] = None) -> 
     return bool(re.search(r"P\d*$", name))
 
 
-# GENCODE biotype used for loci that are real, mapped genomic locations
-# but whose function/transcript structure isn\'t yet confirmed. Distinct
-# from a pseudogene or a true "no information at all" placeholder ID.
-_UNCHARACTERIZED_BIOTYPES = frozenset({"tec"})
+# Versioned Ensembl gene ID, e.g. "ENSG00000141510.16" - the "." here is
+# a STABLE-ID VERSION SUFFIX, not a marker of an uncharacterized
+# clone-based locus. This is the one legitimate exception to the
+# name-pattern check below.
+_ENSEMBL_VERSIONED_ID_RE = re.compile(r"^ENSG\d+\.\d+$")
 
 
 def _is_uncharacterized(name, gene_biotype: Optional[Dict[str, str]] = None) -> bool:
     """
-    Detect clone-based/uncharacterized loci. If gene_biotype is supplied
-    AND has an entry for this gene, trust it completely (a real biotype
-    like "protein_coding" means this is NOT uncharacterized, even if the
-    identifier happens to contain a "." - e.g. a versioned Ensembl ID like
-    "ENSG00000141510.16" is a real, well-characterized gene; the "." is a
-    version suffix, not a marker of an uncharacterized clone-based locus).
-    Only falls back to the name-pattern heuristic ("." in name) when
-    gene_biotype is None OR doesn\'t have an entry for this specific gene -
-    in the latter case we cannot confirm the gene\'s identity at all, so
-    the heuristic is the best available signal, not a good one.
+    Detect clone-based/uncharacterized loci (e.g. "AL117190.3") by NAME
+    PATTERN, not by biotype. This is deliberate, not an oversight: biotype
+    describes what KIND of transcript something is (protein_coding,
+    lncRNA, pseudogene, TEC, ...), which is orthogonal to whether its
+    identifier is a proper curated gene symbol or a provisional
+    clone-based placeholder name. A clone-based locus can carry almost
+    any biotype - GENCODE frequently annotates clone-named loci as
+    lncRNA or even protein_coding once partially characterized while
+    keeping the provisional name. An earlier version of this function
+    trusted biotype=="TEC" as the sole signal and wrongly KEPT
+    "AL117190.3" whenever its biotype was anything else (e.g. lncRNA) -
+    that was a real bug, found by testing against this module's own
+    docstring example.
+
+    gene_biotype is accepted for API-signature consistency with
+    _is_pseudogene but is intentionally NOT used to override this check.
+
+    The only exception: a versioned Ensembl gene ID contains a "." as a
+    stable-ID version suffix, not as evidence of an uncharacterized
+    clone-based name - so that pattern is excluded here.
     """
     if not isinstance(name, str):
         return False
-    if gene_biotype is not None and name in gene_biotype:
-        bt = gene_biotype.get(name, "").strip().lower()
-        return bt in _UNCHARACTERIZED_BIOTYPES
+    if _ENSEMBL_VERSIONED_ID_RE.match(name):
+        return False
     return "." in name
 
 
