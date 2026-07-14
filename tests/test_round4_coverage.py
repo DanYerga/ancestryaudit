@@ -216,6 +216,24 @@ def test_correction_reports_per_class_holdout():
     print("PASS: per_class_holdout present on CorrectionReport and in JSON report.")
 
 
+def test_power_analysis_flags_unconfirmed_ceiling():
+    """
+    Regression test for a self-audit finding: power_analysis()'s bisection
+    search for n_needed is capped at n=5000. If even that ceiling never
+    reaches 80% power (e.g. a strict threshold_p combined with a small
+    floor gap), the function used to silently return the ceiling value as
+    if it were a confirmed answer - misleading, since 80% power at that n
+    was never actually verified. n_needed_confirmed must be False here.
+    """
+    fw = AncestryAuditFramework(threshold_p=0.01, threshold_pp=0.5)
+    result = fw.power_analysis(n_source=900, n_target=450,
+                                expected_gap_pp=0.05,
+                                n_simulations=10, n_permutations=50)
+    assert result["recommendation"] == "UNDERPOWERED"
+    assert result["n_needed_confirmed"] is False
+    print("PASS: power_analysis flags unconfirmed search-ceiling result.")
+
+
 if __name__ == "__main__":
     test_validate_uses_same_holdout_for_pre_and_post()
     test_gene_biotype_overrides_name_heuristic()
@@ -225,4 +243,5 @@ if __name__ == "__main__":
     test_report_serializes_metric()
     test_plot_gap_does_not_crash_with_balanced_accuracy()
     test_correction_reports_per_class_holdout()
+    test_power_analysis_flags_unconfirmed_ceiling()
     print("\nAll round-4 coverage tests passed.")

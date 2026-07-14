@@ -104,8 +104,22 @@ audit_report = framework.audit(
     X_asian_filtered,   y_asian
 )
 print(audit_report)
-# AuditReport(gap=+2.39pp, p=0.0069, d=1.52, null_CI=[-2.10, 2.15],
-#             recommendation='correction_required')
+# AuditReport(gap=+2.39pp, p=0.0069, d=1.52, metric=accuracy,
+#             null_dist_spread=[-2.10, 2.15], recommendation='correction_required')
+
+# For cohorts with differing class balance (recommended - check with a
+# chi-square test on labels first), use balanced_accuracy instead. d is
+# always None on this path (see "Expected Results" below for the paper's
+# actual reproduction: 0/7 algorithms significant, p-values 0.19-0.99):
+audit_report_balanced = framework.audit(
+    LogisticRegression(max_iter=1000),
+    X_western_filtered, y_western,
+    X_asian_filtered,   y_asian,
+    metric="balanced_accuracy"
+)
+print(audit_report_balanced)
+# AuditReport(gap=<value>pp, p=<value>, d=N/A, metric=balanced_accuracy,
+#             null_dist_spread=[<lo>, <hi>], recommendation=<value>)
 
 # ── Step 3: Correct ────────────────────────────────────────────────────────
 if audit_report.recommendation == "correction_required":
@@ -139,7 +153,7 @@ framework.summary()
 
 | Method | Description | Returns |
 |--------|-------------|---------|
-| `audit(model, X_source, y_source, X_target, y_target)` | Detect gap | `AuditReport` |
+| `audit(model, X_source, y_source, X_target, y_target, metric="accuracy")` | Detect gap (`metric="balanced_accuracy"` for cohorts with differing class balance) | `AuditReport` |
 | `filter_stratification_noise(X, gene_list)` | Remove OR/pseudogene columns | `(X_filtered, kept_genes, filter_log)` |
 | `correct(model, X_source, y_source, X_target_labeled, y_target_labeled, n_samples)` | Fine-tune correction | `(corrected_model, CorrectionReport)` |
 | `validate(corrected_model, X_holdout, y_holdout)` | Post-correction audit | `ValidationReport` |
@@ -152,13 +166,14 @@ framework.summary()
 |-------|------|-------------|
 | `gap_pp` | float | Accuracy gap in percentage points (positive = source better) |
 | `p_value` | float | Two-sided p-value from label-permutation test |
-| `cohen_d` | float | Effect size |
+| `cohen_d` | Optional[float] | Effect size (accuracy metric only; `None` for balanced_accuracy) |
 | `null_ci` | tuple | 2.5/97.5 percentiles of permutation null (NOT a CI on the gap) |
-| `source_accuracy` | float | Model accuracy on held-out source data |
-| `target_accuracy` | float | Model accuracy on target data |
+| `source_accuracy` | float | Model score (per `metric`) on held-out source data |
+| `target_accuracy` | float | Model score (per `metric`) on target data |
 | `n_source` | int | Source sample count |
 | `n_target` | int | Target sample count |
 | `recommendation` | str | `"correction_required"` or `"no_action"` |
+| `metric` | str | `"accuracy"` or `"balanced_accuracy"` - which metric produced this report |
 
 ### `CorrectionReport` fields
 
@@ -171,6 +186,7 @@ framework.summary()
 | `all_positive` | bool | True if all 5 refits show positive delta_pp (not just the primary fixed split) |
 | `direction_confirmed` | bool | True if McNemar p<0.05 AND fine-tuned model beat baseline (c>b) |
 | `corrected_accuracy_holdout` | float | Corrected accuracy on hold_primary only (clean) - use this, not `corrected_accuracy`, to compare against `baseline_accuracy` |
+| `per_class_holdout` | dict | Per-class baseline/corrected accuracy on holdout - inspect this to check whether a pooled positive `delta_pp` is actually driven by one class only |
 | `baseline_accuracy` | float | Source-only accuracy on full target |
 | `corrected_accuracy` | float | Estimated corrected accuracy on full target |
 

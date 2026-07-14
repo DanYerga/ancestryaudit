@@ -462,6 +462,7 @@ class AncestryAuditFramework:
         power_pct = estimate_power(n_source, n_target)
 
         # Bisection for n_needed (both sides scale 2:1)
+        n_needed_confirmed = True
         if power_pct < 80:
             lo, hi = n_target, 5000
             for _ in range(8):
@@ -471,7 +472,14 @@ class AncestryAuditFramework:
                     hi = mid
                 else:
                     lo = mid
+            # Bisection is capped at hi=5000. If the search never actually
+            # observed >=80% power at any tested n (i.e. every midpoint
+            # failed), hi is just the unverified search ceiling, not a
+            # confirmed answer - a prior version silently returned it as
+            # if it were. Verify explicitly before reporting it as SUFFICIENT.
+            p_at_hi = estimate_power(hi * 2, hi, seed_offset=999)
             n_needed = hi
+            n_needed_confirmed = bool(p_at_hi >= 80)
         else:
             n_needed = n_target
 
@@ -489,8 +497,14 @@ class AncestryAuditFramework:
         print(f"  Estimated power      : {power_pct:.1f}%")
         print(f"  Recommendation       : {recommendation}")
         if recommendation == "UNDERPOWERED":
-            print(f"  n_target for 80% pwr : ~{n_needed:,}")
-            print(f"  n_source for 80% pwr : ~{n_needed*2:,}")
+            if n_needed_confirmed:
+                print(f"  n_target for 80% pwr : ~{n_needed:,}")
+                print(f"  n_source for 80% pwr : ~{n_needed*2:,}")
+            else:
+                print(f"  n_target for 80% pwr : >{n_needed:,} (search ceiling "
+                      f"reached - even {n_needed:,} target samples did not "
+                      f"reach 80% power at this expected_gap_pp; true "
+                      f"n_needed exceeds the search range and is unconfirmed)")
             print(f"  (both sides must scale together)")
         print("  CAVEAT: power/MDE estimated on synthetic i.i.d. Gaussian")
         print("  features, not real correlated CNV data. Treat as a rough")
@@ -498,14 +512,15 @@ class AncestryAuditFramework:
         print("=" * 58)
 
         return {
-            "power_pct":       power_pct,
-            "recommendation":  recommendation,
-            "n_target_needed": n_needed,
-            "n_source_needed": n_needed * 2 if n_needed else None,
-            "flip_rate_used":  flip_rate,
-            "expected_gap_pp": expected_gap_pp,
-            "n_source":        n_source,
-            "n_target":        n_target,
+            "power_pct":          power_pct,
+            "recommendation":     recommendation,
+            "n_target_needed":    n_needed,
+            "n_source_needed":    n_needed * 2 if n_needed else None,
+            "n_needed_confirmed": n_needed_confirmed,
+            "flip_rate_used":     flip_rate,
+            "expected_gap_pp":    expected_gap_pp,
+            "n_source":           n_source,
+            "n_target":           n_target,
             "caveat": ("Estimated on synthetic i.i.d. Gaussian features, "
                        "not real correlated CNV data - a rough benchmark, "
                        "not an empirical guarantee."),
