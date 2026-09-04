@@ -15,6 +15,14 @@ Statistical design:
   (which would be circular and produce near-zero p-values by construction
   on any finite dataset, as the original implementation did).
 
+  Multiple comparisons:
+  When compute_audit() is run once per algorithm (see
+  run_per_algorithm_audit() below), the resulting family of p-values is
+  corrected with a Holm-Bonferroni step-down procedure before any
+  significance claim is made. This is what "Holm correction for multiple
+  comparisons ... applied across algorithms" in the Methods section refers
+  to — previously that claim was not backed by any code in this file.
+
 Cohen's d:
   Proper between-group effect size on raw per-sample correctness
   (binary 0/1), using pooled within-group SD.
@@ -176,6 +184,123 @@ def compute_audit(model, X_source, y_source, X_target, y_target,
         "null_sd":         float(perm_gaps.std(ddof=1)),
         "metric":          metric,
     }
+
+
+def holm_bonferroni(p_values, alpha=0.05):
+    """
+    Holm-Bonferroni step-down correction for a family of hypothesis tests.
+
+    Standard textbook procedure (Holm, 1979):
+      1. Sort p-values ascending: p_(1) <= p_(2) <= ... <= p_(n)
+      2. Compare p_(i) to alpha / (n - i + 1)
+      3. Reject H_(1)...H_(k) where k is the largest index such that
+         p_(i) <= alpha / (n - i + 1) for all i <= k (step-down: stop at
+         the first failure)
+      4. Adjusted p-values are reported as the smallest alpha at which each
+         hypothesis would still be rejected, enforced to be monotonically
+         non-decreasing in sorted order (hence the running max below).
+
+    Parameters
+    ----------
+    p_values : array-like of float
+        Raw two-sided p-values, one per algorithm/hypothesis, in any order.
+    alpha : float
+        Family-wise error rate to control. Default 0.05.
+
+    Returns
+    -------
+    adj_p : np.ndarray, same order as input
+        Holm-adjusted p-values. Compare directly to `alpha`.
+    reject : np.ndarray of bool, same order as input
+        True where the corrected test rejects H0 (i.e. adj_p <= alpha AND
+        the step-down chain up to that point also rejected).
+    """
+    p_values = np.asarray(p_values, dtype=float)
+    n = len(p_values)
+    order = np.argsort(p_values)
+    sorted_p = p_values[order]
+
+    adj_sorted = np.empty(n)
+    running_max = 0.0
+    for i in range(n):
+        raw_adj = (n - i) * sorted_p[i]
+        running_max = max(running_max, raw_adj)  # enforce monotonicity
+        adj_sorted[i] = min(running_max, 1.0)
+
+    reject_sorted = np.zeros(n, dtype=bool)
+    still_rejecting = True
+    for i in range(n):
+        if still_rejecting and sorted_p[i] <= alpha / (n - i):
+            reject_sorted[i] = True
+        else:
+            still_rejecting = False  # step-down: stop at first non-reject
+
+    adj_p = np.empty(n)
+    reject = np.empty(n, dtype=bool)
+    adj_p[order] = adj_sorted
+    reject[order] = reject_sorted
+    return adj_p, reject
+
+
+def run_per_algorithm_audit(
+    base_algorithms, X_source, y_source, X_target, y_target,
+    metric="accuracy", n_permutations=1000, random_state=42, alpha=0.05
+):
+    """
+    Run compute_audit() (permutation test) once per algorithm, then apply a
+    Holm-Bonferroni correction across the family of algorithm-level tests,
+    instead of pooling algorithm-level point estimates into a single
+    t-test/bootstrap-CI (statistically invalid: algorithms are not an i.i.d.
+    random sample, and a handful of algorithms is far too small for those
+    tests' assumptions anyway).
+
+    Significance is determined by Holm-adjusted p-value <= alpha, not raw
+    p < 0.05. The test is two-sided: compute_audit() already returns a
+    two-sided permutation p-value, and no additional direction filter
+    (e.g. requiring gap_pp > 0) is applied here, since that would silently
+    convert the test into a one-sided "source > target" test inconsistent
+    with the two-sided permutation null described in Methods.
+
+    X_source/y_source should be the FULL (unsplit) source cohort -
+    compute_audit() performs its own internal 75/25 train/test split.
+
+    Returns
+    -------
+    (results, n_significant) : (dict[str, dict], int)
+        results[algo_name] is compute_audit()'s full result dict, plus
+        'p_holm' (Holm-adjusted p-value) and 'significant_holm' (bool).
+        n_significant counts Holm-corrected rejections.
+    """
+    names = list(base_algorithms.keys())
+    raw_results = {}
+    raw_p = []
+
+    for name in names:
+        r = compute_audit(
+            clone(base_algorithms[name]), X_source, y_source, X_target, y_target,
+            n_permutations=n_permutations, random_state=random_state,
+            metric=metric
+        )
+        raw_results[name] = r
+        raw_p.append(r["p_value"])
+
+    adj_p, reject = holm_bonferroni(raw_p, alpha=alpha)
+
+    print(f"{'Algo':<5}{'Gap(pp)':>10}{'raw p':>10}{'Holm p':>10}{'Significant':>13}")
+    print("-" * 51)
+    n_significant = 0
+    for name, ap, rej in zip(names, adj_p, reject):
+        r = raw_results[name]
+        r["p_holm"] = float(ap)
+        r["significant_holm"] = bool(rej)
+        n_significant += int(rej)
+        print(f"{name:<5}{r['gap_pp']:>+10.2f}{r['p_value']:>10.4f}"
+              f"{ap:>10.4f}{'YES' if rej else 'no':>13}")
+
+    print(f"\n{n_significant}/{len(names)} algorithms significant after Holm "
+          f"correction (metric={metric}, family size={len(names)})")
+
+    return raw_results, n_significant
 
 
 def _to_numpy(X):
