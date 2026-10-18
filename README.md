@@ -209,13 +209,13 @@ self-reported Asian patients. The full notebook is in
 [`validation/`](validation/) and on
 [Kaggle](https://www.kaggle.com/code/danae345/project-final).
 
-| Analysis | White / Asian | Significant after Holm (raw / balanced) |
-| --- | --- | --- |
-| Liver vs stomach | 451 / 242 | 0/6 / 0/6 |
-| Negative control: thyroid vs bladder | 636 / 89 | 0/6 / 0/6 |
-| Negative control: colon vs lung | 594 / 17 | 0/6 / 0/6 |
-| Esophagus vs stomach | 373 / 125 | 0/6 / 2/6, models more accurate for Asian patients |
-| Squamous esophagus vs stomach | 307 / 124 | 2/6 / 1/6 |
+| Analysis | White / Asian | Seed-42 split, significant after Holm (raw / balanced) | Splits with ≥1 significant model, of 20 (raw / balanced) |
+| --- | --- | --- | --- |
+| Liver vs stomach | 451 / 242 | 0/6 / 0/6 | 0 / 1 |
+| Negative control: thyroid vs bladder | 636 / 89 | 0/6 / 0/6 | 2 / 4 |
+| Negative control: colon vs lung | 594 / 17 | 0/6 / 0/6 | 0 / 0 |
+| Esophagus vs stomach | 373 / 125 | 2/6 / 3/6, models more accurate for Asian patients | 5 / 17 |
+| Squamous esophagus vs stomach | 307 / 124 | 3/6 / 0/6 | 20 / 1 |
 
 - **Sensitivity.** At these sample sizes the test detects gaps of about
   11 percentage points with 80% power; at zero true gap it flagged 3.0% of
@@ -224,7 +224,13 @@ self-reported Asian patients. The full notebook is in
   were squamous (chi-square = 39.7, p < 0.001). This explained why models
   looked more accurate for Asian patients; balanced accuracy alone did not
   remove the effect. Among squamous tumors only, raw-accuracy gaps of up to
-  20 percentage points shrank or disappeared under balanced accuracy.
+  20 percentage points, significant in every split, disappeared under balanced
+  accuracy in 19 of 20 splits.
+- **Robustness.** Every analysis was repeated on 20 random 75/25 splits. The
+  thyroid/bladder control showed a significant model in 4 of 20 splits under
+  balanced accuracy (always logistic regression), with small gaps of +2 to +6
+  points in all models, which suggests a small difference between those two
+  cohorts rather than a fault in the test.
 - **Correction.** Fine-tuning with half of the Asian patients raised accuracy
   on the other half by 2.70 percentage points (95% CI 0.69 to 4.41, raw
   accuracy, 10 seeds). Unsupervised CORAL alignment lowered accuracy for all
