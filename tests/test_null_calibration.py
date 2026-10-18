@@ -64,7 +64,6 @@ def test_null_fpr():
         f"Check compute_audit() uses permutation test, not bootstrap t-test."
     )
     print(f"PASS ✓  FPR={fpr*100:.1f}% within acceptable range.")
-    return fpr
 
 
 if __name__ == "__main__":

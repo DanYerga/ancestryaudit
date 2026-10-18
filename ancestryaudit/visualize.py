@@ -46,8 +46,9 @@ def plot_gap(audit_report, save_path: Optional[str] = None,
                   edgecolor="gray", alpha=0.9)
     )
 
-    rec_color = ("#dc2626" if audit_report.recommendation == "correction_required"
-                 else "#16a34a")
+    rec_color = {"correction_required": "#dc2626",
+                 "check_composition": "#d97706"}.get(
+                     audit_report.recommendation, "#16a34a")
     ax.text(0.5, 0.97, audit_report.recommendation,
             transform=ax.transAxes, ha="center", va="top",
             fontsize=9, fontweight="bold", color=rec_color)

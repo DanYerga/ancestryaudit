@@ -93,7 +93,7 @@ def test_flip_rate_calibration():
             "power_analysis() gap estimates are no longer reliable."
         )
 
-    return all_pass
+    assert all_pass
 
 
 if __name__ == "__main__":

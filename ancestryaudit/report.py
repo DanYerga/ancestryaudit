@@ -11,7 +11,9 @@ def generate_full_report(
     correction_report=None,
     validation_report=None,
     filter_log=None,
-    save_path: str = "ancestryaudit_report.json"
+    save_path: str = "ancestryaudit_report.json",
+    composition_report=None,
+    multi_audit_report=None,
 ) -> Dict[str, Any]:
     """
     Assemble a full JSON report from completed pipeline steps.
@@ -38,6 +40,23 @@ def generate_full_report(
         report["filter"] = _safe_dict(filter_log)
         report["steps_completed"].append("filter")
 
+    if composition_report is not None:
+        report["diagnose"] = _safe_dict(composition_report.details)
+        report["steps_completed"].append("diagnose")
+
+    if multi_audit_report is not None:
+        report["audit_many"] = {
+            "metric":        multi_audit_report.metric,
+            "n_models":      int(multi_audit_report.n_models),
+            "n_significant": int(multi_audit_report.n_significant),
+            "verdict":       multi_audit_report.verdict,
+            "gaps_pp":       _safe_dict(multi_audit_report.gaps_pp),
+            "p_raw":         _safe_dict(multi_audit_report.p_raw),
+            "p_holm":        _safe_dict(multi_audit_report.p_holm),
+            "significant":   _safe_dict(multi_audit_report.significant),
+        }
+        report["steps_completed"].append("audit_many")
+
     if audit_report is not None:
         report["audit"] = {
             "gap_pp":           round(float(audit_report.gap_pp), 4),
@@ -52,6 +71,8 @@ def generate_full_report(
             "n_target":         int(audit_report.n_target),
             "recommendation":   str(audit_report.recommendation),
             "metric":           str(getattr(audit_report, "metric", "accuracy")),
+            "class_composition_p": getattr(audit_report, "class_composition_p", None),
+            "notes":            list(getattr(audit_report, "notes", [])),
         }
         report["steps_completed"].append("audit")
 

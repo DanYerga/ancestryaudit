@@ -26,22 +26,38 @@ Quick start
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 import json
+import warnings
 
 import numpy as np
 
-from .audit      import compute_audit
+from .audit      import compute_audit, run_per_algorithm_audit, holm_bonferroni
+from .diagnose   import check_composition
 from .correction import apply_correction
 from .filter     import filter_noise
 from .report     import generate_full_report
 
-__version__ = "0.3.10"
+__version__ = "0.4.0"
 __author__  = "Dana Yergaliyeva"
 __all__     = [
     "AncestryAuditFramework",
     "AuditReport",
     "CorrectionReport",
     "ValidationReport",
+    "CompositionReport",
+    "MultiAuditReport",
+    "check_composition",
+    "run_per_algorithm_audit",
+    "holm_bonferroni",
 ]
+
+# Possible values of AuditReport.recommendation
+RECOMMENDATIONS = (
+    "no_action",             # no significant gap above threshold_pp
+    "target_more_accurate",  # significant gap in favor of the target group
+    "check_composition",     # significant gap, but class proportions differ
+                             # and metric="accuracy": rerun with balanced accuracy
+    "correction_required",   # significant gap against the target group
+)
 
 
 # ── Data classes ──────────────────────────────────────────────────────────────
@@ -57,8 +73,10 @@ class AuditReport:
     target_accuracy: float
     n_source:        int
     n_target:        int
-    recommendation:  str     # "correction_required" | "no_action"
+    recommendation:  str     # one of RECOMMENDATIONS
     metric:          str = "accuracy"  # "accuracy" or "balanced_accuracy"
+    class_composition_p: Optional[float] = None  # chi-square p for class proportions
+    notes:           List[str] = field(default_factory=list)  # plain-language advice
     # Private fields — excluded from repr
     _model:      Any        = field(default=None, repr=False)
 
@@ -70,6 +88,50 @@ class AuditReport:
             f"metric={self.metric}, "
             f"null_dist_spread=[{self.null_ci[0]:.2f}, {self.null_ci[1]:.2f}], "
             f"recommendation='{self.recommendation}')"
+        )
+
+
+@dataclass
+class CompositionReport:
+    """Results from AncestryAuditFramework.diagnose()."""
+    class_props_source: List[float]
+    class_props_target: List[float]
+    class_p:            Optional[float]
+    class_differs:      bool
+    subgroup_labels:    Optional[List[Any]] = None
+    subgroup_props_source: Optional[List[float]] = None
+    subgroup_props_target: Optional[List[float]] = None
+    subgroup_p:         Optional[float] = None
+    subgroup_differs:   Optional[bool] = None
+    advice:             List[str] = field(default_factory=list)
+    details:            Dict[str, Any] = field(default_factory=dict, repr=False)
+
+    def __str__(self) -> str:
+        cp = f"{self.class_p:.3g}" if self.class_p is not None else "N/A"
+        sp = f"{self.subgroup_p:.3g}" if self.subgroup_p is not None else "not checked"
+        return (
+            f"CompositionReport(class_p={cp}, class_differs={self.class_differs}, "
+            f"subgroup_p={sp}, subgroup_differs={self.subgroup_differs})"
+        )
+
+
+@dataclass
+class MultiAuditReport:
+    """Results from AncestryAuditFramework.audit_many()."""
+    metric:         str
+    n_models:       int
+    n_significant:  int          # after Holm correction
+    verdict:        str          # see audit_many() docstring
+    gaps_pp:        Dict[str, float]
+    p_raw:          Dict[str, float]
+    p_holm:         Dict[str, float]
+    significant:    Dict[str, bool]
+
+    def __str__(self) -> str:
+        return (
+            f"MultiAuditReport(metric={self.metric}, "
+            f"significant={self.n_significant}/{self.n_models} (Holm), "
+            f"verdict='{self.verdict}')"
         )
 
 
@@ -127,9 +189,14 @@ class AncestryAuditFramework:
         Deprecated alias for n_permutations. Permutation-test iterations
         used to build the null distribution and compute the p-value.
     threshold_pp : float, default=2.0
-        Minimum |gap| in percentage points to trigger 'correction_required'.
+        Minimum |gap| in percentage points for a gap to count as
+        actionable (either direction).
     threshold_p : float, default=0.05
-        Maximum p-value to trigger 'correction_required'.
+        Maximum p-value for a gap to count as significant.
+
+    Recommended order: diagnose() -> audit() / audit_many() ->
+    correct() only if the recommendation is 'correction_required' ->
+    validate().
 
     Notes
     -----
@@ -160,6 +227,8 @@ class AncestryAuditFramework:
         self._validation_report: Optional[ValidationReport] = None
         self._filter_log:        Optional[Dict]             = None
         self._corrected_model:   Any                        = None
+        self._composition_report: Optional[CompositionReport] = None
+        self._multi_audit_report: Optional[MultiAuditReport]  = None
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
@@ -195,8 +264,20 @@ class AncestryAuditFramework:
             cohen_d : effect size (accuracy metric only; None for balanced_accuracy)
             null_ci : 2.5/97.5 percentiles of the permutation null distribution
             (centered near zero — NOT a CI on the observed gap)
-            recommendation : 'correction_required' if |gap|>threshold_pp
-                             AND p<threshold_p, else 'no_action'
+            recommendation : one of
+                'no_action'            - no significant gap above threshold_pp
+                'target_more_accurate' - significant gap in favor of the
+                                         target group; no correction needed
+                'check_composition'    - significant gap against the target,
+                                         but class proportions differ and
+                                         metric="accuracy": rerun with
+                                         metric="balanced_accuracy" first
+                'correction_required'  - significant gap against the target
+                                         that class proportions do not
+                                         explain. Check subtypes with
+                                         diagnose() before correcting.
+            class_composition_p : chi-square p-value for class proportions
+            notes : plain-language advice
         """
         results = compute_audit(
             model, X_source, y_source, X_target, y_target,
@@ -208,11 +289,37 @@ class AncestryAuditFramework:
         gap_pp  = results["gap_pp"]
         p_value = results["p_value"]
 
-        recommendation = (
-            "correction_required"
-            if abs(gap_pp) > self.threshold_pp and p_value < self.threshold_p
-            else "no_action"
-        )
+        comp = check_composition(y_source, y_target)
+        class_p = comp["class_p"]
+        significant = (abs(gap_pp) > self.threshold_pp
+                       and p_value < self.threshold_p)
+        notes: List[str] = []
+
+        if not significant:
+            recommendation = "no_action"
+            notes.append(
+                "No significant gap. This is not proof of fairness: run "
+                "power_analysis() to see how large a gap these sample sizes "
+                "can detect.")
+        elif gap_pp < 0:
+            recommendation = "target_more_accurate"
+            notes.append(
+                "The model is significantly MORE accurate for the target "
+                "group. No correction is needed; check composition with "
+                "diagnose() to explain the difference.")
+        elif metric == "accuracy" and comp["class_differs"]:
+            recommendation = "check_composition"
+            notes.append(
+                "Class proportions differ between cohorts "
+                f"(p={class_p:.2g}), so raw accuracy is confounded by class "
+                "mix. Rerun audit() with metric='balanced_accuracy' before "
+                "any correction.")
+        else:
+            recommendation = "correction_required"
+            notes.append(
+                "Significant gap against the target group. Before correcting, "
+                "check subtype composition with diagnose(); if several models "
+                "were audited, use audit_many() for Holm correction.")
 
         self._audit_report = AuditReport(
             gap_pp=gap_pp,
@@ -225,9 +332,103 @@ class AncestryAuditFramework:
             n_target=results["n_target"],
             recommendation=recommendation,
             metric=results.get("metric", metric),
+            class_composition_p=class_p,
+            notes=notes,
             _model=results["trained_model"],
         )
         return self._audit_report
+
+    def diagnose(self, y_source, y_target,
+                 subgroup_source=None, subgroup_target=None,
+                 alpha: float = 0.05) -> CompositionReport:
+        """
+        Check whether the two cohorts differ in composition.
+
+        Compares class proportions (chi-square) and, if subtype labels are
+        given, the subtype mix within a class of interest. Run this before
+        attributing any accuracy gap to ancestry.
+
+        Parameters
+        ----------
+        y_source, y_target : array-like — class labels of each cohort
+        subgroup_source, subgroup_target : sequence, optional — subtype
+            label per sample (e.g. "squamous" / "adenocarcinoma" for the
+            esophageal tumors of each cohort). Missing values are dropped.
+        alpha : float, default 0.05
+
+        Returns
+        -------
+        CompositionReport (full results in .details, advice in .advice)
+        """
+        r = check_composition(y_source, y_target,
+                              subgroup_source, subgroup_target, alpha=alpha)
+        self._composition_report = CompositionReport(
+            class_props_source=r["class_props_source"],
+            class_props_target=r["class_props_target"],
+            class_p=r["class_p"],
+            class_differs=r["class_differs"],
+            subgroup_labels=r["subgroup_labels"],
+            subgroup_props_source=r["subgroup_props_source"],
+            subgroup_props_target=r["subgroup_props_target"],
+            subgroup_p=r["subgroup_p"],
+            subgroup_differs=r["subgroup_differs"],
+            advice=r["advice"],
+            details=r,
+        )
+        return self._composition_report
+
+    def audit_many(self, models: Dict[str, Any], X_source, y_source,
+                   X_target, y_target,
+                   metric: str = "balanced_accuracy") -> MultiAuditReport:
+        """
+        Audit several models at once with Holm correction.
+
+        Testing several models at the 5% level inflates the chance that at
+        least one looks significant by chance (about 26% for six models).
+        This runs the permutation test for each model and adjusts the
+        p-values with the Holm step-down procedure.
+
+        Parameters
+        ----------
+        models : dict name -> unfitted sklearn-compatible estimator
+        X_source, y_source : FULL source cohort (split internally 75/25)
+        X_target, y_target : target cohort
+        metric : {"accuracy", "balanced_accuracy"}, default "balanced_accuracy"
+
+        Returns
+        -------
+        MultiAuditReport with verdict:
+            'no_significant_gap'     - no model significant after Holm
+            'target_less_accurate'   - all significant models favor the source
+            'target_more_accurate'   - all significant models favor the target
+            'inconsistent_direction' - significant models disagree in direction
+        """
+        results, n_sig = run_per_algorithm_audit(
+            models, X_source, y_source, X_target, y_target,
+            metric=metric, n_permutations=self.n_bootstrap,
+            random_state=self.random_state, alpha=self.threshold_p,
+        )
+        sig_gaps = [r["gap_pp"] for r in results.values() if r["significant_holm"]]
+        if not sig_gaps:
+            verdict = "no_significant_gap"
+        elif all(g > 0 for g in sig_gaps):
+            verdict = "target_less_accurate"
+        elif all(g < 0 for g in sig_gaps):
+            verdict = "target_more_accurate"
+        else:
+            verdict = "inconsistent_direction"
+
+        self._multi_audit_report = MultiAuditReport(
+            metric=metric,
+            n_models=len(results),
+            n_significant=int(n_sig),
+            verdict=verdict,
+            gaps_pp={k: float(r["gap_pp"]) for k, r in results.items()},
+            p_raw={k: float(r["p_value"]) for k, r in results.items()},
+            p_holm={k: float(r["p_holm"]) for k, r in results.items()},
+            significant={k: bool(r["significant_holm"]) for k, r in results.items()},
+        )
+        return self._multi_audit_report
 
     def filter_stratification_noise(
         self,
@@ -300,6 +501,20 @@ class AncestryAuditFramework:
         fine-tuning data, leaky/optimistic). Use corrected_accuracy_holdout
         for a fair comparison against baseline_accuracy.
         """
+        if self._audit_report is None:
+            warnings.warn(
+                "correct() was called before audit(): no gap has been "
+                "confirmed. Run audit() (and diagnose()) first; fine-tuning "
+                "with target samples can raise accuracy even when there is "
+                "no bias, so the result is not evidence of a corrected bias.",
+                UserWarning, stacklevel=2)
+        elif self._audit_report.recommendation != "correction_required":
+            warnings.warn(
+                "correct() was called although the last audit recommended "
+                f"'{self._audit_report.recommendation}'. The accuracy change "
+                "from fine-tuning should not be reported as a corrected bias.",
+                UserWarning, stacklevel=2)
+
         corrected_model, results = apply_correction(
             model, X_source, y_source,
             X_target_labeled, y_target_labeled,
@@ -390,6 +605,11 @@ class AncestryAuditFramework:
 
         Uses empirically calibrated flip_rate.
         n_needed derived from bisection simulation.
+
+        Power here is the chance of detecting a gap AGAINST the target
+        group (significant and gap_pp > 0): the permutation test itself is
+        two-sided, but only a target-worse gap counts as a detection, since
+        that is the case a correction would address.
 
         Parameters
         ----------
@@ -547,6 +767,8 @@ class AncestryAuditFramework:
             validation_report=self._validation_report,
             filter_log=self._filter_log,
             save_path=save_path,
+            composition_report=self._composition_report,
+            multi_audit_report=self._multi_audit_report,
         )
 
     def summary(self) -> str:
@@ -561,6 +783,24 @@ class AncestryAuditFramework:
                 f"           {fl['n_kept']} genes retained",
             ]
 
+        if self._composition_report:
+            cr0 = self._composition_report
+            cp = f"{cr0.class_p:.3g}" if cr0.class_p is not None else "N/A"
+            sp = (f"{cr0.subgroup_p:.3g}" if cr0.subgroup_p is not None
+                  else "not checked")
+            lines += [
+                f"\n  [DIAGNOSE] Class mix p = {cp}  (differs: {cr0.class_differs})",
+                f"             Subtype mix p = {sp}",
+            ] + [f"             - {a}" for a in cr0.advice]
+
+        if self._multi_audit_report:
+            mr = self._multi_audit_report
+            lines += [
+                f"\n  [AUDIT x{mr.n_models}] {mr.n_significant}/{mr.n_models} significant "
+                f"after Holm (metric={mr.metric})",
+                f"             → {mr.verdict}",
+            ]
+
         if self._audit_report:
             ar = self._audit_report
             d_str = f"{ar.cohen_d:.3f}" if ar.cohen_d is not None else "N/A"
@@ -569,7 +809,7 @@ class AncestryAuditFramework:
                 f"           p = {ar.p_value:.4f}  d = {d_str}",
                 f"           Null CI [{ar.null_ci[0]:.2f}, {ar.null_ci[1]:.2f}]pp (permutation null spread)",
                 f"           → {ar.recommendation}",
-            ]
+            ] + [f"           - {n}" for n in ar.notes]
 
         if self._correction_report:
             cr = self._correction_report
