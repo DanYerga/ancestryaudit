@@ -123,6 +123,14 @@ print(f"  │    Removed {flog['n_removed']} junk genes  "
 print(f"  │    {_bar(flog['n_kept']/flog['n_input_genes'])}  "
       f"{flog['n_kept']}/{flog['n_input_genes']} genes retained")
 
+# ── 3b. Diagnose cohort composition ────────────────────────────────────────────
+print("\n  ├─ 3b. Diagnosing cohort composition ...")
+comp = framework.diagnose(y_western, y_asian)
+print(f"  │    Class mix  : Western {comp.class_props_source}  "
+      f"Asian {comp.class_props_target}  (p={comp.class_p:.3g})")
+for line in comp.advice:
+    print(f"  │    → {line}")
+
 # ── 4. Audit ───────────────────────────────────────────────────────────────────
 _step(3, 5, "Auditing ancestry-linked performance gap")
 print("  │  Training on Western cohort → evaluating on Asian cohort ...")
@@ -149,8 +157,11 @@ print(f"  │  Cohen's d        : {audit_report.cohen_d:.3f}  "
 print(f"  │  Null CI          : [{audit_report.null_ci[0]:.2f}, "
       f"{audit_report.null_ci[1]:.2f}]pp (permutation null spread)")
 print(f"  │")
-rec_icon = "⚠️ " if audit_report.recommendation == "correction_required" else "✅"
+rec_icon = {"correction_required": "⚠️ ", "check_composition": "🔎"}.get(
+    audit_report.recommendation, "✅")
 print(f"  │  Recommendation   : {rec_icon}  {audit_report.recommendation.upper()}")
+for note in audit_report.notes:
+    print(f"  │  → {note}")
 _ok(f"Audit complete")
 
 # ── 5. Correct ─────────────────────────────────────────────────────────────────
@@ -183,8 +194,8 @@ if audit_report.recommendation == "correction_required":
     print(f"  │  p-value (McNemar): {correction_report.p_value:.4f}")
     _ok("Correction complete")
 else:
-    _step(4, 5, "Correction — skipped (no_action)")
-    print(f"  │  Gap below threshold — no correction needed.")
+    _step(4, 5, f"Correction — skipped ({audit_report.recommendation})")
+    print(f"  │  The audit did not confirm a gap that needs correction.")
     _ok()
 
 # ── 6. Validate ────────────────────────────────────────────────────────────────
@@ -218,23 +229,25 @@ report_dict = framework.generate_report(save_path=report_path)
 elapsed = time.time() - t_start
 
 print()
-print("  ╔══════════════════════════════════════════════════════╗")
-print("  ║            AncestryAudit Demo Complete               ║")
-print("  ╠══════════════════════════════════════════════════════╣")
-print(f"  ║  Bias detected      : {audit_report.gap_pp:>+6.2f}pp  "
-      f"(p={audit_report.p_value:.4f})         ║")
+W = 58  # inner width of the summary box
 
+def _row(text):
+    print(f"  ║ {text:<{W - 2}} ║")
+
+sig = "significant" if audit_report.p_value < 0.05 else "not significant"
+print("  ╔" + "═" * W + "╗")
+print("  ║" + "AncestryAudit Demo Complete".center(W) + "║")
+print("  ╠" + "═" * W + "╣")
+_row(f"Gap            : {audit_report.gap_pp:+.2f}pp (p={audit_report.p_value:.4f}, {sig})")
+_row(f"Recommendation : {audit_report.recommendation}")
 if correction_report:
-    print(f"  ║  Correction applied : {correction_report.delta_pp:>+6.2f}pp  "
-          f"(5-refit robust)        ║")
-
+    _row(f"Correction     : {correction_report.delta_pp:+.2f}pp on held-out target")
 if validation is not None:
-    print(f"  ║  After correction   : {validation.post_gap:>+6.2f}pp  "
-          f"gap remaining           ║")
+    _row(f"After correct. : {validation.post_gap:+.2f}pp gap remaining")
 else:
-    print(f"  ║  After correction   : N/A (no correction applied)      ║")
-print(f"  ║  Steps completed    : {', '.join(report_dict['steps_completed']):<28}  ║")
-print(f"  ║  Report saved to    : {report_path:<28}  ║")
-print(f"  ║  Runtime            : {elapsed:.1f}s{' '*37}║")
-print("  ╚══════════════════════════════════════════════════════╝")
+    _row("After correct. : N/A (no correction applied)")
+_row(f"Steps          : {', '.join(report_dict['steps_completed'])}")
+_row(f"Report         : {report_path}")
+_row(f"Runtime        : {elapsed:.1f}s")
+print("  ╚" + "═" * W + "╝")
 print()

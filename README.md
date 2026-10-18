@@ -1,13 +1,17 @@
 # AncestryAudit
 
-**Bias detection and correction framework for genomic cancer AI.**
+**Explain an accuracy gap before you correct it.**
 
-Detects ancestry-linked performance gaps in copy number variation (CNV)-based
-cancer classifiers, applies supervised fine-tuning correction, and generates
-structured audit reports.
+AncestryAudit is an open-source Python library for auditing cancer genomic
+classifiers across patient populations. It tests whether an accuracy gap
+between two groups is statistically significant, estimates the smallest gap
+the data can detect, checks whether differences in cancer-type proportions or
+subtypes explain the gap, and only then offers a correction.
 
-Developed from research on ancestry bias in TCGA-LIHC/STAD classification
-(Yergaliyeva, 2026).
+A lower accuracy in one group is not proof that a model is biased. The gap can
+appear by chance, or because the two groups contain a different mix of
+cancers. Correcting a model for a bias it does not have can lower its accuracy
+while leaving the real cause unaddressed.
 
 ---
 
@@ -15,281 +19,246 @@ Developed from research on ancestry bias in TCGA-LIHC/STAD classification
 
 ```bash
 pip install ancestryaudit
-# or from source:
-pip install -e .
 ```
 
----
-
-## Input Format
-
-AncestryAudit works on any CNV feature matrix:
-
-| Format | Shape | Notes |
-|--------|-------|-------|
-| `np.ndarray` | `(n_samples, n_genes)` | Continuous copy-number values |
-| `pd.DataFrame` | `(n_samples, n_genes)` | Column names = gene identifiers |
-
-**Column values:** continuous copy number (e.g. TCGA ABSOLUTE pipeline output,
-where 2.0 = normal diploid, >2 = amplification, <2 = deletion).
-
-**Labels:** binary integer (0 or 1), one per sample.
-
-**Models:** any scikit-learn compatible estimator with `fit` / `predict` interface.
+Python 3.8 or later. Works with any scikit-learn-compatible model
+(`fit` / `predict`).
 
 ---
 
-## Quick Start
+## Quick start
 
 ```python
 import numpy as np
 from sklearn.linear_model import LogisticRegression
 from ancestryaudit import AncestryAuditFramework
 
-# NOTE: Replace with your real CNV matrices
-# The example below uses synthetic data for illustration only
+# Synthetic data for illustration: replace with your own feature matrices.
 rng = np.random.RandomState(42)
-X_western = rng.randn(200, 50)
-y_western  = (X_western[:, 0] + X_western[:, 1] > 0).astype(int)
-X_asian    = rng.randn(80, 50)
-y_asian    = (X_asian[:, 0] + X_asian[:, 1] > 0).astype(int)
+X_source = rng.randn(400, 50)
+y_source = (X_source[:, 0] + X_source[:, 1] > 0).astype(int)
+X_target = rng.randn(200, 50)
+y_target = (X_target[:, 0] + X_target[:, 1] > 0).astype(int)
 
-framework = AncestryAuditFramework()
+framework = AncestryAuditFramework(random_state=42)
 
-# Step 0: Check data sufficiency first
-power = framework.power_analysis(n_source=200, n_target=80, expected_gap_pp=3.0)
+# 1. Do the cohorts differ in composition?
+print(framework.diagnose(y_source, y_target))
 
-# Step 1: Detect ancestry-linked performance gap
-report = framework.audit(
-    LogisticRegression(max_iter=1000),
-    X_western, y_western,
-    X_asian,   y_asian
-)
-print(f"Gap: {report.gap_pp:.2f}pp, p={report.p_value:.4f}")
-print(f"Recommendation: {report.recommendation}")
+# 2. Is there a significant gap?
+report = framework.audit(LogisticRegression(max_iter=1000),
+                         X_source, y_source, X_target, y_target,
+                         metric="balanced_accuracy")
+print(report)
+for note in report.notes:
+    print("-", note)
 ```
 
 Output:
+
 ```
-Gap: +2.39pp, p=0.0069
-Recommendation: correction_required
+CompositionReport(class_p=0.885, class_differs=False, subgroup_p=not checked, subgroup_differs=None)
+AuditReport(gap=-2.13pp, p=0.5790, d=N/A, metric=balanced_accuracy, null_dist_spread=[-6.79, 6.95], recommendation='no_action')
+- No significant gap. This is not proof of fairness: run power_analysis() to see how large a gap these sample sizes can detect.
 ```
 
 ---
 
-## Full Pipeline
+## Recommended workflow
 
 ```python
-from ancestryaudit import AncestryAuditFramework
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
 from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
 
-framework = AncestryAuditFramework(
-    random_state=42,
-    n_bootstrap=1000,
-    threshold_pp=2.0,   # minimum gap to trigger correction_required
-    threshold_p=0.05    # maximum p-value to trigger correction_required
-)
+framework = AncestryAuditFramework(random_state=42)
 
-# ── Step 1: Filter population-stratification noise (optional) ──────────────
-X_western_filtered, kept_genes, filter_log = framework.filter_stratification_noise(
-    X_western_df,   # pd.DataFrame with gene names as columns
-    gene_list       # list of gene name strings
-)
-print(f"Removed {filter_log['n_removed']} junk genes, kept {filter_log['n_kept']}")
+# Step 1: how large a gap can these cohorts detect?
+power = framework.power_analysis(n_source=451, n_target=242, expected_gap_pp=3.0)
 
-# ── Step 2: Audit ──────────────────────────────────────────────────────────
-audit_report = framework.audit(
-    LogisticRegression(max_iter=1000),
-    X_western_filtered, y_western,
-    X_asian_filtered,   y_asian
-)
-print(audit_report)
-# AuditReport(gap=+2.39pp, p=0.0069, d=1.52, metric=accuracy,
-#             null_dist_spread=[-2.10, 2.15], recommendation='correction_required')
+# Step 2: do the cohorts differ in class proportions or subtypes?
+comp = framework.diagnose(y_source, y_target,
+                          subgroup_source=subtype_source,   # optional
+                          subgroup_target=subtype_target)   # optional
+print(comp.advice)
 
-# For cohorts with differing class balance (recommended - check with a
-# chi-square test on labels first), use balanced_accuracy instead. d is
-# always None on this path (see "Expected Results" below for the paper's
-# actual reproduction: 0/7 algorithms significant, p-values 0.19-0.99):
-audit_report_balanced = framework.audit(
-    LogisticRegression(max_iter=1000),
-    X_western_filtered, y_western,
-    X_asian_filtered,   y_asian,
-    metric="balanced_accuracy"
-)
-print(audit_report_balanced)
-# AuditReport(gap=<value>pp, p=<value>, d=N/A, metric=balanced_accuracy,
-#             null_dist_spread=[<lo>, <hi>], recommendation=<value>)
+# Step 3: audit several models with Holm correction.
+# Wrapping preprocessing in a pipeline fits scaling and PCA on training rows
+# only, so no information leaks from the evaluation data.
+models = {
+    "LR": make_pipeline(StandardScaler(), PCA(50),
+                        LogisticRegression(max_iter=1000, class_weight="balanced")),
+    "RF": make_pipeline(StandardScaler(), PCA(50),
+                        RandomForestClassifier(n_estimators=300, random_state=42)),
+}
+multi = framework.audit_many(models, X_source, y_source, X_target, y_target,
+                             metric="balanced_accuracy")
+print(multi.verdict)
 
-# ── Step 3: Correct ────────────────────────────────────────────────────────
-if audit_report.recommendation == "correction_required":
-    corrected_model, correction_report = framework.correct(
-        LogisticRegression(max_iter=1000),
-        X_western_filtered, y_western,
-        X_asian_labeled,    y_asian_labeled,  # labeled Asian samples
-        n_samples=75                          # how many to include
-    )
-    print(correction_report)
-    # CorrectionReport(delta=+3.51pp, p=0.0012, n_used=75, all_positive=True)
+# Step 4: correct only if the audit recommends it.
+report = framework.audit(models["LR"], X_source, y_source, X_target, y_target,
+                         metric="balanced_accuracy")
+if report.recommendation == "correction_required":
+    corrected_model, correction = framework.correct(
+        models["LR"], X_source, y_source,
+        X_target_labeled, y_target_labeled, n_samples=75)
+    # Step 5: check the corrected model on target samples it has not seen.
+    validation = framework.validate(corrected_model, X_target_holdout, y_target_holdout)
 
-# ── Step 4: Validate ───────────────────────────────────────────────────────
-validation_report = framework.validate(
-    corrected_model,
-    X_asian_holdout, y_asian_holdout   # never seen during correction
-)
-print(validation_report)
-# ValidationReport(pre_gap=+2.39pp, post_gap=-1.12pp, improvement=+3.51pp)
-
-# ── Step 5: Report ─────────────────────────────────────────────────────────
-report_dict = framework.generate_report("my_audit_report.json")
 framework.summary()
+framework.generate_report("ancestryaudit_report.json")
 ```
 
+Pass the **full** source cohort to `audit()` and `audit_many()`: they split it
+75/25 internally. Passing only a training subset makes the library split it
+again.
+
 ---
 
-## API Reference
+## What the recommendation means
 
-### `AncestryAuditFramework`
+| `recommendation` | Meaning | What to do |
+| --- | --- | --- |
+| `no_action` | No significant gap above `threshold_pp` (default 2 points) | Check `power_analysis()`: a non-significant result is not proof of fairness |
+| `target_more_accurate` | Significant gap **in favor of** the target group | No correction; explain it with `diagnose()` |
+| `check_composition` | Significant gap under raw accuracy, but class proportions differ | Rerun with `metric="balanced_accuracy"` |
+| `correction_required` | Significant gap against the target group, not explained by class proportions | Check subtypes with `diagnose()`, then consider `correct()` |
+
+`audit_many()` returns one of `no_significant_gap`, `target_less_accurate`,
+`target_more_accurate` or `inconsistent_direction`, based on the models that
+remain significant after Holm correction.
+
+`correct()` issues a warning if it is called without an audit, or if the last
+audit did not recommend correction: fine-tuning with target samples can raise
+accuracy even when there is no bias, and that change should not be reported as
+a corrected bias.
+
+---
+
+## API reference
+
+### `AncestryAuditFramework(random_state=42, n_permutations=1000, threshold_pp=2.0, threshold_p=0.05)`
 
 | Method | Description | Returns |
-|--------|-------------|---------|
-| `audit(model, X_source, y_source, X_target, y_target, metric="accuracy")` | Detect gap (`metric="balanced_accuracy"` for cohorts with differing class balance) | `AuditReport` |
-| `filter_stratification_noise(X, gene_list)` | Remove OR/pseudogene columns | `(X_filtered, kept_genes, filter_log)` |
-| `correct(model, X_source, y_source, X_target_labeled, y_target_labeled, n_samples)` | Fine-tune correction | `(corrected_model, CorrectionReport)` |
-| `validate(corrected_model, X_holdout, y_holdout)` | Post-correction audit | `ValidationReport` |
-| `generate_report(save_path)` | Full JSON report | `dict` |
-| `summary()` | Print pipeline summary | `str` |
+| --- | --- | --- |
+| `power_analysis(n_source, n_target, expected_gap_pp=3.0)` | Power to detect a gap of the given size, and the sample sizes needed for 80% power | `dict` |
+| `diagnose(y_source, y_target, subgroup_source=None, subgroup_target=None)` | Chi-square tests for class proportions and subtype mix | `CompositionReport` |
+| `audit(model, X_source, y_source, X_target, y_target, metric="accuracy")` | Permutation test for one model's accuracy gap | `AuditReport` |
+| `audit_many(models, X_source, y_source, X_target, y_target, metric="balanced_accuracy")` | Permutation test for several models with Holm correction | `MultiAuditReport` |
+| `filter_stratification_noise(X, gene_list, gene_biotype=None)` | Remove olfactory-receptor genes, pseudogenes and uncharacterized loci | `(X_filtered, kept_genes, filter_log)` |
+| `correct(model, X_source, y_source, X_target_labeled, y_target_labeled, n_samples=75)` | Fine-tuning with labeled target samples | `(corrected_model, CorrectionReport)` |
+| `validate(corrected_model, X_holdout, y_holdout)` | Gap and accuracy before and after correction on held-out data | `ValidationReport` |
+| `summary()`, `generate_report(save_path)` | Printed summary and JSON report of all steps run | `str`, `dict` |
 
-### `AuditReport` fields
+Module-level helpers: `check_composition()`, `run_per_algorithm_audit()`,
+`holm_bonferroni()`.
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `gap_pp` | float | Accuracy gap in percentage points (positive = source better) |
-| `p_value` | float | Two-sided p-value from label-permutation test |
-| `cohen_d` | Optional[float] | Effect size (accuracy metric only; `None` for balanced_accuracy) |
-| `null_ci` | tuple | 2.5/97.5 percentiles of permutation null (NOT a CI on the gap) |
-| `source_accuracy` | float | Model score (per `metric`) on held-out source data |
-| `target_accuracy` | float | Model score (per `metric`) on target data |
-| `n_source` | int | Source sample count |
-| `n_target` | int | Target sample count |
-| `recommendation` | str | `"correction_required"` or `"no_action"` |
-| `metric` | str | `"accuracy"` or `"balanced_accuracy"` - which metric produced this report |
+### `AuditReport`
 
-### `CorrectionReport` fields
+| Field | Description |
+| --- | --- |
+| `gap_pp` | Source minus target score, in percentage points (positive = target worse) |
+| `p_value` | Two-sided permutation p-value |
+| `cohen_d` | Effect size (accuracy metric only; `None` for balanced accuracy) |
+| `null_ci` | 2.5 and 97.5 percentiles of the permutation null (not a confidence interval on the gap) |
+| `source_accuracy`, `target_accuracy` | Score on held-out source data and on the target data |
+| `n_source`, `n_target` | Sample counts |
+| `recommendation` | See the table above |
+| `metric` | `"accuracy"` or `"balanced_accuracy"` |
+| `class_composition_p` | Chi-square p-value for class proportions |
+| `notes` | Plain-language advice |
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `delta_pp` | float | Mean accuracy improvement on target holdout (pp) |
-| `p_value` | float | McNemar p-value (exact binomial when b+c<25, chi-square with continuity correction otherwise) |
-| `n_used` | int | Target samples used (min of n_samples and available) |
-| `refit_robustness` | dict | mean/min/max delta_pp across 5 refits (model random_state varied, split held fixed) — tests training stochasticity only |
-| `all_positive` | bool | True if all 5 refits show positive delta_pp (not just the primary fixed split) |
-| `direction_confirmed` | bool | True if McNemar p<0.05 AND fine-tuned model beat baseline (c>b) |
-| `corrected_accuracy_holdout` | float | Corrected accuracy on hold_primary only (clean) - use this, not `corrected_accuracy`, to compare against `baseline_accuracy` |
-| `per_class_holdout` | dict | Per-class baseline/corrected accuracy on holdout - inspect this to check whether a pooled positive `delta_pp` is actually driven by one class only |
-| `baseline_accuracy` | float | Source-only accuracy on full target |
-| `corrected_accuracy` | float | Estimated corrected accuracy on full target |
+### `CompositionReport`
 
-### `ValidationReport` fields
+`class_props_source`, `class_props_target`, `class_p`, `class_differs`,
+`subgroup_labels`, `subgroup_props_source`, `subgroup_props_target`,
+`subgroup_p`, `subgroup_differs`, `advice`; full counts in `details`.
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `pre_gap` | float | Performance gap before correction (pp) |
-| `post_gap` | float | Performance gap after correction (pp) |
-| `correction_magnitude` | float | pre_gap - post_gap |
-| `improvement_pp` | float | Accuracy improvement on target (pp) |
-| `pre_accuracy_target` | float | Target accuracy before correction |
-| `post_accuracy_target` | float | Target accuracy after correction |
+### `CorrectionReport`
+
+`delta_pp` (accuracy change on a fixed target holdout), `p_value` (McNemar),
+`n_used`, `refit_robustness` (5 refits), `all_positive`,
+`direction_confirmed`, `baseline_accuracy`, `corrected_accuracy_holdout`
+(use this one for comparisons), `corrected_accuracy`, `per_class_holdout`.
+
+### `ValidationReport`
+
+`pre_gap`, `post_gap`, `correction_magnitude`, `improvement_pp`,
+`pre_accuracy_target`, `post_accuracy_target`.
 
 ---
 
-## Filtering Details
+## Gene filter
 
-`filter_stratification_noise` removes three gene categories that are known
-to reflect population-level genetic drift rather than cancer biology:
-
-- **Olfactory receptor genes** (`OR*`) — CNV in these clusters varies by
-  ancestral migration history, not cancer type
-- **Pseudogenes** (`*P`, `*P1`, `*P2`, …) — non-functional, high
-  population-stratification signal
-- **Uncharacterized loci** (names containing `.`) — clone-based placeholder
-  identifiers with no interpretable biological information
-
-**Required Methods disclosure:** The feature space was defined using all
-samples prior to train/test split, which constitutes a bounded form of
-data snooping. No label information was used in this step (Kaufman et al., 2012).
+`filter_stratification_noise()` removes three gene categories that mostly
+reflect population history rather than cancer biology: olfactory-receptor
+genes (`OR*`), pseudogenes (by Ensembl/GENCODE biotype when `gene_biotype` is
+given, otherwise by name pattern, with a warning), and uncharacterized
+clone-based loci (names containing `.`).
 
 ---
 
-## Expected Results
+## Validation on TCGA data
 
-> **Disclaimer:** Audit results depend on the model, train/test split,
-> and preprocessing pipeline provided. Results will differ from published
-> paper figures, which used a 7-algorithm ensemble with specific PCA
-> preprocessing. The library is designed for arbitrary input —
-> directional consistency (not numerical identity) with paper results
-> is the correct validation criterion.
+AncestryAudit was validated on gene-level copy-number data from The Cancer
+Genome Atlas. Six classifiers were trained on self-reported White patients to
+distinguish liver cancer (LIHC) from stomach cancer (STAD) and tested on
+self-reported Asian patients. The full notebook is in
+[`validation/`](validation/) and on
+[Kaggle](https://www.kaggle.com/code/danae345/project-final).
 
-**Validated reproduction test (Yergaliyeva, 2026):**
+| Analysis | White / Asian | Significant after Holm (raw / balanced) |
+| --- | --- | --- |
+| Liver vs stomach | 451 / 242 | 0/6 / 0/6 |
+| Negative control: thyroid vs bladder | 636 / 89 | 0/6 / 0/6 |
+| Negative control: colon vs lung | 594 / 17 | 0/6 / 0/6 |
+| Esophagus vs stomach | 373 / 125 | 0/6 / 2/6, models more accurate for Asian patients |
+| Squamous esophagus vs stomach | 307 / 124 | 2/6 / 1/6 |
 
-When provided with the exact paper train/test split (White n=338 train,
-n=113 test; Asian n=242 evaluation) and gene-aligned PCA features,
-the library reproduces paper results with 0.003pp numerical precision:
+- **Sensitivity.** At these sample sizes the test detects gaps of about
+  11 percentage points with 80% power; at zero true gap it flagged 3.0% of
+  simulated datasets (nominal 5%).
+- **Subtype composition.** 97% of Asian versus 36% of White esophageal tumors
+  were squamous (chi-square = 39.7, p < 0.001). This explained why models
+  looked more accurate for Asian patients; balanced accuracy alone did not
+  remove the effect. Among squamous tumors only, raw-accuracy gaps of up to
+  20 percentage points shrank or disappeared under balanced accuracy.
+- **Correction.** Fine-tuning with half of the Asian patients raised accuracy
+  on the other half by 2.70 percentage points (95% CI 0.69 to 4.41, raw
+  accuracy, 10 seeds). Unsupervised CORAL alignment lowered accuracy for all
+  six models.
 
-| Metric | Paper | Library |
-|--------|-------|---------|
-| Mean PGI | +2.39pp | +2.393pp |
-| Algorithms positive (raw accuracy) | 7/7 | 7/7 |
-| Direction | positive | positive |
+---
 
-> **Important caveat:** the "7/7 algorithms positive" result above uses raw
-> accuracy on a combined LIHC-vs-STAD classification label. The White and
-> Asian cohorts have substantially different LIHC:STAD class ratios (60/40
-> vs 35/65, chi-square=38.70, p=4.9e-10), so raw accuracy is confounded by
-> this class-imbalance mismatch, not just CNV signal. Under balanced
-> accuracy (immune to differing class priors) with a proper permutation
-> test, 0 of 7 algorithms show a statistically significant gap (p-values
-> 0.19-0.99). The raw-accuracy reproduction above is retained for numerical
-> reference against the original paper figures; it is not evidence of a
-> real ancestry-linked effect on its own. See the paper for full details.
+## Limitations
 
-All 6 API methods (import, audit, correct, validate, report, filter)
-pass independent correctness tests on synthetic CNV data.
-
-> **Note on train/test splits:** Provide the full dataset and let the
-> framework handle splitting internally. Passing only the training
-> portion causes the framework to re-split a subset, producing different
-> model boundaries and non-comparable gap values.
-
-**Statistical power at TCGA scale:** `power_analysis(n_source=451, n_target=242,
-expected_gap_pp=3.0)` — the realistic gap range for CNV data — returns **11.0%
-power (UNDERPOWERED)**. Reaching 80% power requires `n_target≈798` (~3.3× the
-current n=242) and `n_source≈1596` (~3.5× the current n=451); both sides must
-scale together and the needed ratio (2:1 source:target) differs slightly from
-the current study's ratio (1.86:1). TCGA-LIHC/STAD sample sizes are not
-sufficient to detect a 1-5pp ancestry-linked gap at conventional power.
+- Groups are defined by self-reported race, a social category, not by genetic
+  ancestry. Report gaps as differences between self-reported groups.
+- The library checks known causes of a gap (chance, class proportions,
+  subtypes). It does not detect batch or sequencing-center effects.
+- It trusts the labels it is given: a binary classifier always returns one of
+  its two classes, so data from a different task will not be flagged.
+- Small minority cohorts limit what can be detected; always report the result
+  of `power_analysis()` next to a non-significant audit.
+- Validated so far on one data type (copy-number variation) from one source
+  (TCGA).
 
 ---
 
 ## Citation
 
-If you use AncestryAudit in research, please cite:
-
 ```
-Yergaliyeva, D. (2026). Ancestry-linked bias in genomic cancer AI:
-Transfer learning correction for East Asian populations.
-[Manuscript in preparation]
+Yergaliyeva, D. (2026). Auditing and improving cancer genomic models for Asian
+patients with AncestryAudit. https://github.com/DanYerga/ancestryaudit
 ```
 
-This library was developed using data from the TCGA Research Network. Any
-publication or presentation using TCGA data must include the following
-acknowledgement:
-
-> The results here are in whole or part based upon data generated by the
-> TCGA Research Network: https://www.cancer.gov/tcga
+The validation used data generated by the TCGA Research Network:
+https://www.cancer.gov/tcga
 
 ---
 
 ## License
 
-MIT License. Copyright (c) 2026 Dana Yergaliyeva.
+MIT License. Copyright (c) 2026 Dana Yergaliyeva. See [LICENSE](LICENSE).

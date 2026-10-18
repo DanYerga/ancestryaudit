@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+message: "If you use AncestryAudit, please cite it as below."
+title: "AncestryAudit: Auditing and improving cancer genomic models for Asian patients"
+type: software
+authors:
+  - family-names: Yergaliyeva
+    given-names: Dana
+version: 0.4.0
+date-released: 2026-10-18
+license: MIT
+repository-code: "https://github.com/DanYerga/ancestryaudit"
+url: "https://pypi.org/project/ancestryaudit/"
+abstract: >-
+  An open-source Python library that tests whether an accuracy gap between
+  patient populations is statistically significant, estimates the smallest gap
+  the data can detect, and checks whether cancer-type or subtype composition
+  explains the gap before any correction is applied.
+keywords:
+  - cancer genomics
+  - fairness
+  - machine learning
+  - copy-number variation
+  - TCGA
